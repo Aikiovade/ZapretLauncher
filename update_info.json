@@ -1,6 +1,6 @@
 {
   "version": "17.1",
-  "hash": "",
+  "hash": "1229c8dd00cbe0a66b8ef83b5933a9a11a1d91bbf7b6f13394824067e6777381",
   "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.1/Zapret.exe",
   "changelog": [
     "Фикс: все профили теперь корректно отображаются в списке",
