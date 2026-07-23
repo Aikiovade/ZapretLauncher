@@ -839,6 +839,13 @@ class ZapretLauncher(ctk.CTk):
     # --- TgWsProxy методы ---
     def start_proxy(self):
         try:
+            # Убиваем старые зависшие процессы прокси, чтобы освободить порт
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            subprocess.call(f'taskkill /F /IM {TGWS_PROXY_EXE}', shell=True, startupinfo=si, creationflags=0x08000000)
+            time.sleep(0.3)
+
             self.zapret_dir = locate_zapret_dir()
             # Ищем исполняемый файл прокси во всех возможных местах
             proxy_exe = ""
@@ -863,13 +870,18 @@ class ZapretLauncher(ctk.CTk):
                 log_error(f"TgWsProxy: файл '{TGWS_PROXY_EXE}' не найден ни в одном из путей")
                 self.proxy_status = "OFF"
                 return
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = subprocess.SW_HIDE
+
             self._proxy_process = subprocess.Popen(
                 [proxy_exe], cwd=os.path.dirname(proxy_exe), startupinfo=si,
                 creationflags=0x08000000  # CREATE_NO_WINDOW
             )
+            time.sleep(0.5)
+            if self._proxy_process.poll() is not None:
+                log_error(f"TgWsProxy мгновенно завершился с кодом {self._proxy_process.poll()}")
+                self.proxy_status = "OFF"
+                self._proxy_process = None
+                return
+
             self.proxy_status = "ON"
             log_error(f"TgWsProxy запущен: {proxy_exe}")
             try: self.tray_icon.notify("TgWsProxy включён", "Zapret Launcher")
@@ -1317,16 +1329,9 @@ class ZapretLauncher(ctk.CTk):
 
     def on_mouse_move(self, event): 
         self.mouse_x, self.mouse_y = event.x, event.y
-        # Сбрасываем таймер, если мышь двигается в правой части окна (где меню)
         if getattr(self, 'settings_open', False):
             if event.x > self.canvas.winfo_width() - self.s(280):
                 self.menu_last_active = time.time()
-                
-    def on_scroll(self, event):
-        if self.settings_open and self.mode_menu_open:
-            delta = 1 if event.delta < 0 else -1
-            max_off = max(0, len(self.bat_files) - 6)
-            self.menu_scroll_offset = max(0, min(max_off, self.menu_scroll_offset + delta))
 
     def on_right_click(self, event):
         s = self.s
@@ -1352,6 +1357,12 @@ class ZapretLauncher(ctk.CTk):
         if self.launcher_status == "OFF":
              self.status_text = self.get_text("status_ready")
 
+    def on_scroll(self, event):
+        if self.settings_open and self.mode_menu_open:
+            delta = 1 if event.delta < 0 else -1
+            max_off = max(0, len(self.bat_files) - 8)
+            self.menu_scroll_offset = max(0, min(max_off, self.menu_scroll_offset + delta))
+
     def on_click(self, event):
         self.menu_last_active = time.time() # Любой клик сбрасывает таймер
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
@@ -1363,30 +1374,44 @@ class ZapretLauncher(ctk.CTk):
         if getattr(self, 'changelog_open', False):
             px, py = s(30), s(20)
             pw = w - s(60)
-            # Клик на X
             if abs(event.x-(px+pw-s(18))) < s(14) and abs(event.y-(py+s(18))) < s(14):
                 self.changelog_open = False
                 self.play_sound("OFF")
             else:
-                self.changelog_open = False  # любой клик закрывает
+                self.changelog_open = False
             return
 
-        # Кнопка настройки (шестеренка вверху справа)
         # Кнопка настройки (шестеренка вверху справа)
         if math.sqrt(dx*dx + dy*dy) < s(25):
             self.settings_open = not self.settings_open
             self.mode_menu_open = False
             self.play_sound("ON")
             return
-        
+
+        # 1. ГЛАВНАЯ КНОПКА СТАРТ В ЦЕНТРЕ — ВЫСОКИЙ ПРИОРИТЕТ!
+        if math.sqrt((event.x-cx)**2 + (event.y-cy)**2) < s(165):
+            if self.launcher_status == "TESTING":
+                stop_y = cy + s(65)
+                if abs(event.x - cx) < s(40) and abs(event.y - stop_y) < s(12):
+                    self.test_is_running = False
+                    self.play_sound("OFF")
+                return
+            elif self.launcher_status != "BUSY":
+                self.mode_menu_open = False
+                threading.Thread(target=self.toggle_system, daemon=True).start()
+                return
+
+        # 2. ОБРАБОТКА МЕНЮ НАСТРОЕК В ПРАВОЙ ЧАСТИ
         if self.settings_open:
             mx = w - s(260)
             if self.mode_menu_open:
-                # Координата start_y_list должна совпадать с render_loop (s(673))
-                lx, ly, iw = mx+s(20), s(673), s(220)
-                v_cnt = min(len(self.bat_files), 6)
-                if lx <= event.x <= lx+iw and ly <= event.y <= ly + (v_cnt*s(28))*self.mode_menu_anim:
-                    idx = int((event.y - ly)//s(28)) + self.menu_scroll_offset
+                # Список профилей открывается ВВЕРХ от s(628)
+                v_cnt = min(len(self.bat_files), 8)
+                list_h = v_cnt * s(28)
+                top_y = s(628) - list_h
+                lx, iw = mx+s(20), s(220)
+                if lx <= event.x <= lx+iw and top_y <= event.y <= s(628):
+                    idx = int((event.y - top_y)//s(28)) + self.menu_scroll_offset
                     if 0 <= idx < len(self.bat_files):
                         new_bat = self.bat_files[idx]
                         old_bat = self.selected_bat
@@ -1416,7 +1441,7 @@ class ZapretLauncher(ctk.CTk):
                    chk_action(mx+s(20), s(255), 'start_minimized') or chk_action(mx+s(135), s(255), 'toggle_lang'):
                     return
 
-                # Ряд 4: TgWsProxy и авто-рестарт (Y=335..405)
+                # Ряд 4: TgWsProxy и авто-рестарт (Y=330..410)
                 if mx+s(20) <= event.x <= mx+s(125) and s(330) <= event.y <= s(410):
                     threading.Thread(target=self.toggle_proxy, daemon=True).start()
                     return
@@ -1977,13 +2002,13 @@ class ZapretLauncher(ctk.CTk):
                 
                 if self.mode_menu_anim > 0.01:
                     actual_files = self.bat_files
-                    v_cnt = min(len(actual_files), 6)
+                    v_cnt = min(len(actual_files), 8)
                     list_height = (v_cnt * s(28)) * self.mode_menu_anim
-                    start_y_list = s(673)
-                    self.rounded_rect(mx_menu+s(20), start_y_list, mx_menu+s(240), start_y_list + list_height, r=s(5), fill_col="#0a0b1e", outline_col=active_color)
-                    for i in range(self.menu_scroll_offset, min(self.menu_scroll_offset + 6, len(actual_files))):
-                        iy_item = start_y_list + (i - self.menu_scroll_offset) * s(28)
-                        if (iy_item + s(28) - start_y_list) > list_height + 1: break
+                    top_y_list = s(628) - list_height
+                    self.rounded_rect(mx_menu+s(20), top_y_list, mx_menu+s(240), s(628), r=s(5), fill_col="#0a0b1e", outline_col=active_color)
+                    for i in range(self.menu_scroll_offset, min(self.menu_scroll_offset + 8, len(actual_files))):
+                        iy_item = top_y_list + (i - self.menu_scroll_offset) * s(28)
+                        if iy_item + s(28) > s(628) + 1: break
                         b_n = actual_files[i]
                         clean_n = re.sub(r'[\(\)]', '', b_n.replace(".bat","").replace("general","").strip()) or "Standard"
                         hvr_i = (mx_menu+s(20) <= self.mouse_x <= mx_menu+s(240) and iy_item <= self.mouse_y <= iy_item+s(28))
