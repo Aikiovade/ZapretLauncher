@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 ZapretLauncher v17.0
+# 🚀 ZapretLauncher v17.1
 
 ### **Удобный и производительный лаунчер для автоматической настройки и управления обходом блокировок Zapret (YouTube, Discord) и ускорения Telegram в Windows**
 
