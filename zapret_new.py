@@ -1360,7 +1360,7 @@ class ZapretLauncher(ctk.CTk):
     def on_scroll(self, event):
         if self.settings_open and self.mode_menu_open:
             delta = 1 if event.delta < 0 else -1
-            max_off = max(0, len(self.bat_files) - 8)
+            max_off = max(0, len(self.bat_files) - 16)
             self.menu_scroll_offset = max(0, min(max_off, self.menu_scroll_offset + delta))
 
     def on_click(self, event):
@@ -1406,7 +1406,7 @@ class ZapretLauncher(ctk.CTk):
             mx = w - s(260)
             if self.mode_menu_open:
                 # Список профилей открывается ВВЕРХ от s(628)
-                v_cnt = min(len(self.bat_files), 8)
+                v_cnt = min(len(self.bat_files), 16)
                 list_h = v_cnt * s(28)
                 top_y = s(628) - list_h
                 lx, iw = mx+s(20), s(220)
@@ -1663,16 +1663,36 @@ class ZapretLauncher(ctk.CTk):
             log_error(f"launch_winws_direct error: {e}")
             return False
 
+    def _install_files_sync(self, dest_path):
+        self.status_text = self.get_text("status_installing")
+        self.launcher_status = "BUSY"
+        try:
+            zip_path = resource_path(DATA_ARCHIVE_NAME)
+            if os.path.exists(zip_path):
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(os.path.dirname(dest_path))
+                make_hidden(dest_path)
+                self._refresh_bat_files()
+                return True
+            else:
+                log_error(f"Архив не найден: {zip_path}")
+                return False
+        except Exception as e:
+            log_error(f"Install sync error: {e}")
+            return False
+
     def start_process_logic(self):
         self.zapret_dir = locate_zapret_dir()
         if self.auto_repair:
              si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = subprocess.SW_HIDE
              subprocess.call("ipconfig /flushdns & netsh interface ip delete arpcache", shell=True, startupinfo=si, creationflags=0x08000000)
         
-        if not os.path.exists(self.zapret_dir): 
-            self.check_and_install_files()
-            self.launcher_status, self.status_text = "OFF", self.get_text("status_no_file")
-            return
+        # Если папки нет или она пуста (нет winws.exe), распаковываем файлы синхронно
+        if not os.path.exists(self.zapret_dir) or not os.path.exists(os.path.join(self.zapret_dir, "bin", "winws.exe")): 
+            success = self._install_files_sync(self.zapret_dir)
+            if not success:
+                self.launcher_status, self.status_text = "OFF", self.get_text("status_no_file")
+                return
 
         if not self.selected_bat or self.selected_bat not in self.bat_files:
             self._refresh_bat_files()
@@ -2002,11 +2022,11 @@ class ZapretLauncher(ctk.CTk):
                 
                 if self.mode_menu_anim > 0.01:
                     actual_files = self.bat_files
-                    v_cnt = min(len(actual_files), 8)
+                    v_cnt = min(len(actual_files), 16)
                     list_height = (v_cnt * s(28)) * self.mode_menu_anim
                     top_y_list = s(628) - list_height
                     self.rounded_rect(mx_menu+s(20), top_y_list, mx_menu+s(240), s(628), r=s(5), fill_col="#0a0b1e", outline_col=active_color)
-                    for i in range(self.menu_scroll_offset, min(self.menu_scroll_offset + 8, len(actual_files))):
+                    for i in range(self.menu_scroll_offset, min(self.menu_scroll_offset + 16, len(actual_files))):
                         iy_item = top_y_list + (i - self.menu_scroll_offset) * s(28)
                         if iy_item + s(28) > s(628) + 1: break
                         b_n = actual_files[i]
