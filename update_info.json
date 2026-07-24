@@ -1,10 +1,10 @@
 {
-  "version": "17.1",
-  "hash": "4f60954d4bdda929a6e0d845bfa3e43ea95d89c657e372695637860f8aa27a03",
-  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.1/Zapret.exe",
+  "version": "17.2",
+  "hash": "4b8569a80a39a998df56200cbe66bbaecc878966b67ef8aa465f65478a61336a",
+  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.2/Zapret.exe",
   "changelog": [
-    "Фикс: Меню профилей теперь отображает все профили без скролла и корректно позиционируется",
-    "Фикс: Сброс статуса СТАРТ при первом запуске (теперь распаковка идет синхронно)",
-    "Фикс: TgWsProxy теперь стабильно запускается (устранены гонки состояний)"
+    "Фикс: Устранена проблема с падением программы каждые 3-5 секунд",
+    "Фикс: Watchdog теперь запускает службу в отдельном потоке",
+    "Фикс: Оптимизирован счётчик аптайма"
   ]
 }

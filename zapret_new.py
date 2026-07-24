@@ -31,7 +31,7 @@ import keyboard
 # ======================================================================
 # 1. КОНФИГУРАЦИЯ И ПУТИ
 # ======================================================================
-CURRENT_VERSION = "17.1"
+CURRENT_VERSION = "17.2"
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/Aikiovade/ZapretLauncher/main/update_info.json"
 
 # --- GLOBAL UI SETTINGS (Critical for fast start) ---
@@ -776,9 +776,6 @@ class ZapretLauncher(ctk.CTk):
         while getattr(self, '_watchdog_running', True):
             try:
                 if self.launcher_status == "ON":
-                    # Аптайм: накапливаем секунды работы
-                    self._total_uptime_sec += 5
-                    self._save_stats()
                     alive = any(
                         p.info['name'].lower() == 'winws.exe'
                         for p in psutil.process_iter(['name'])
@@ -789,13 +786,20 @@ class ZapretLauncher(ctk.CTk):
                         if getattr(self, 'auto_restart', False):
                             log_error("Watchdog: auto-restart включён, перезапускаю службу")
                             self.launcher_status = "BUSY"
-                            self.start_process_logic()
+                            threading.Thread(target=self.start_process_logic, daemon=True).start()
                         else:
+                            log_error("Watchdog: auto-restart отключён, сбрасываю статус")
                             self.launcher_status = "OFF"
                             self.status_text = self.get_text("status_ready")
-                            try: self.tray_icon.notify("Обход упал!", "Zapret Launcher — перезапустите обход")
+                            try: self.tray_icon.notify("Обход упал!", "Zapret Launcher")
                             except: pass
-                # Прокси-ватчдог: процесс завершился сам
+                    else:
+                        self._total_uptime_sec += 5
+                        self._save_stats()
+                else:
+                    self._total_uptime_sec += 5
+                    self._save_stats()
+                
                 if self.proxy_status == "ON" and self._proxy_process:
                     if self._proxy_process.poll() is not None:
                         log_error("Proxy watchdog: TgWsProxy завершился")
@@ -976,7 +980,7 @@ class ZapretLauncher(ctk.CTk):
                 zip_path = resource_path(DATA_ARCHIVE_NAME)
                 if os.path.exists(zip_path):
                     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(os.path.dirname(dest_path))
+                        zip_ref.extractall(APP_DATA_DIR)
                     make_hidden(dest_path)
                     self.status_text = self.get_text("status_ready")
                     self.launcher_status = "OFF"
@@ -1388,8 +1392,9 @@ class ZapretLauncher(ctk.CTk):
             self.play_sound("ON")
             return
 
-        # 1. ГЛАВНАЯ КНОПКА СТАРТ В ЦЕНТРЕ — ВЫСОКИЙ ПРИОРИТЕТ!
-        if math.sqrt((event.x-cx)**2 + (event.y-cy)**2) < s(165):
+        # 1. ГЛАВНАЯ КНОПКА СТАРТ В ЦЕНТРЕ — ВЫСОКИЙ ПРИОРИТЕТ! (только если меню настроек закрыто,
+        # иначе перехватывает клики по кнопкам внутри панели настроек, например TgWsProxy)
+        if not self.settings_open and math.sqrt((event.x-cx)**2 + (event.y-cy)**2) < s(165):
             if self.launcher_status == "TESTING":
                 stop_y = cy + s(65)
                 if abs(event.x - cx) < s(40) and abs(event.y - stop_y) < s(12):
@@ -1670,7 +1675,7 @@ class ZapretLauncher(ctk.CTk):
             zip_path = resource_path(DATA_ARCHIVE_NAME)
             if os.path.exists(zip_path):
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(os.path.dirname(dest_path))
+                    zip_ref.extractall(APP_DATA_DIR)
                 make_hidden(dest_path)
                 self._refresh_bat_files()
                 return True
