@@ -1,6 +1,6 @@
 {
   "version": "17.2",
-  "hash": "4b8569a80a39a998df56200cbe66bbaecc878966b67ef8aa465f65478a61336a",
+  "hash": "b338aa8a47f368ddf27ad390d191c91e0fa1a662549eaa91dee045557620127b",
   "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.2/Zapret.exe",
   "changelog": [
     "Фикс: Устранена проблема с падением программы каждые 3-5 секунд",
