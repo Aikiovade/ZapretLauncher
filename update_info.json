@@ -1,10 +1,10 @@
 {
-  "version": "17.2",
-  "hash": "b338aa8a47f368ddf27ad390d191c91e0fa1a662549eaa91dee045557620127b",
-  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.2/Zapret.exe",
+  "version": "17.3",
+  "hash": "24472F172321BDE84D38AC1AD5285C3C5EC50B3649C9B0D7816DDBFC51408F5F",
+  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.3/Zapret.exe",
   "changelog": [
-    "Фикс: Устранена проблема с падением программы каждые 3-5 секунд",
-    "Фикс: Watchdog теперь запускает службу в отдельном потоке",
-    "Фикс: Оптимизирован счётчик аптайма"
+    "Кнопка отключения уведомлений (только на главном экране)",
+    "Исправлен автозапуск — теперь через ярлык (работает при переносе .exe)",
+    "Тихий старт теперь реально скрывает окно из панели задач"
   ]
 }

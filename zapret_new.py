@@ -31,7 +31,7 @@ import keyboard
 # ======================================================================
 # 1. КОНФИГУРАЦИЯ И ПУТИ
 # ======================================================================
-CURRENT_VERSION = "17.2"
+CURRENT_VERSION = "17.3"
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/Aikiovade/ZapretLauncher/main/update_info.json"
 
 # --- GLOBAL UI SETTINGS (Critical for fast start) ---
@@ -52,6 +52,11 @@ AMERICAN_ANTHEM_FILE = "americanets.mp3"
 TGWS_PROXY_EXE = "TgWsProxy_windows.exe"  # TgWsProxy — запускается из папки zapret
 
 CHANGELOG = [
+    ("v17.3", [
+        "+ Кнопка отключения уведомлений (только на главном экране)",
+        "+ Исправлен автозапуск — теперь через ярлык (работает при переносе .exe)",
+        "+ Версия 17.3",
+    ]),
     ("v17.2", [
         "* Фикс: Устранена проблема с падением программы каждые 3-5 секунд",
         "* Фикс: Watchdog теперь запускает службу в отдельном потоке",
@@ -121,6 +126,10 @@ def locate_zapret_dir():
     return candidates[0]
 
 ZAPRET_DIR = locate_zapret_dir()
+
+def get_autorun_exe_path():
+    """Путь к .exe для автозапуска - всегда в папке с данными"""
+    return os.path.join(APP_DATA_DIR, FOLDER_NAME, "Zapret.exe")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, CONFIG_FILE_NAME)
 LOG_PATH = os.path.join(APP_DATA_DIR, LOG_FILE_NAME)
 
@@ -349,21 +358,57 @@ def enable_debug_privilege():
         log_error(f"Debug priv error: {e}")
         return False
 
+def get_exe_path():
+    """Получает путь к .exe файлу (работает и для .py и для frozen .exe)"""
+    if getattr(sys, 'frozen', False):
+        return sys.executable
+    else:
+        return os.path.abspath(sys.argv[0])
+
+def create_shortcut(target_path, shortcut_path, work_dir=None):
+    """Создаёт .lnk ярлык Windows"""
+    try:
+        import pythoncom
+        from win32com.shell import shell
+        
+        if work_dir is None:
+            work_dir = os.path.dirname(target_path)
+        
+        shortcut = pythoncom.CoCreateInstance(
+            shell.CLSID_ShellLink, None,
+            pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink
+        )
+        
+        shortcut.SetPath(target_path)
+        shortcut.SetWorkingDirectory(work_dir)
+        shortcut.SetDescription("Zapret Launcher")
+        shortcut.SetShowCmd(1)  # SW_SHOWNORMAL
+        
+        persist_file = shortcut.QueryInterface(pythoncom.IID_IPersistFile)
+        persist_file.Save(shortcut_path, 0)
+        
+        return True
+    except Exception as e:
+        log_error(f"Shortcut creation error: {e}")
+        return False
+
 def set_autorun(enable):
     try:
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = "FixByA1kio"
-        if getattr(sys, 'frozen', False):
-            exe_path = f'"{sys.executable}"'
-        else:
-            exe_path = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}"'
+        # Папка автозагрузки пользователя
+        autostart_folder = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        shortcut_path = os.path.join(autostart_folder, 'Zapret.lnk')
+        
+        if enable:
+            # Ярлык ссылается на Zapret.exe в папке с данными (AppData)
+            exe_path = get_autorun_exe_path()
             
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
-        if enable: winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+            # Создаём ярлык
+            create_shortcut(exe_path, shortcut_path)
         else:
-            try: winreg.DeleteValue(key, app_name)
-            except: pass
-        winreg.CloseKey(key)
+            # Удаляем ярлык если есть
+            if os.path.exists(shortcut_path):
+                os.remove(shortcut_path)
+        
         return True
     except Exception as e:
         log_error(f"Autorun error: {e}")
@@ -371,12 +416,9 @@ def set_autorun(enable):
 
 def check_autorun():
     try:
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = "FixByA1kio"
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
-        winreg.QueryValueEx(key, app_name)
-        winreg.CloseKey(key)
-        return True
+        autostart_folder = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        shortcut_path = os.path.join(autostart_folder, 'Zapret.lnk')
+        return os.path.exists(shortcut_path)
     except: return False
 
 def get_ping_ms(host):
@@ -567,6 +609,8 @@ class ZapretLauncher(ctk.CTk):
         self.snow_enabled, self.minimal_mode, self.start_minimized, self.auto_repair = True, False, False, False
         self.auto_restart = False      # Авто-перезапуск при падении службы
         self.proxy_enabled = False     # TgWsProxy: включать при старте
+        self.notifications_enabled = True  # Уведомления в системном трее
+        self.exe_path = None           # Путь к .exe для автозапуска
         self.theme_name = DEFAULT_THEME
         self.theme_color = self.themes_data[DEFAULT_THEME]
         self.selected_bat, self.favorite_bat = DEFAULT_BAT, None
@@ -574,6 +618,12 @@ class ZapretLauncher(ctk.CTk):
 
         self.zapret_dir = locate_zapret_dir()
         self._refresh_bat_files()
+        
+        # Копируем .exe в папку с данными (где он должен лежать для автозапуска)
+        self.copy_exe_to_appdata()
+        
+        # Автозапуск всегда ссылается на папку с данными
+        set_autorun(True)
         
         threading.Thread(target=self.run_startup_tasks, daemon=True).start()
         
@@ -596,8 +646,8 @@ class ZapretLauncher(ctk.CTk):
         self.update_state = "idle"
         self.remote_version = None
         
-        self.autorun_enabled, self.update_available, self.is_updating = False, False, False
-        self.after(100, lambda: setattr(self, 'autorun_enabled', check_autorun()))
+        self.autorun_enabled = check_autorun()
+        self.update_available, self.is_updating = False, False
         self.mouse_x, self.mouse_y = 0, 0
         self.switch_snow_pos = 1.0 if self.snow_enabled else 0.0
         self.switch_style_pos = 1.0 if self.minimal_mode else 0.0
@@ -606,6 +656,7 @@ class ZapretLauncher(ctk.CTk):
         self.switch_autorun_pos = 1.0 if self.autorun_enabled else 0.0
         self.switch_autorestart_pos = 1.0 if self.auto_restart else 0.0
         self.switch_proxy_pos = 1.0 if self.proxy_enabled else 0.0
+        self.switch_notifications_pos = 1.0 if self.notifications_enabled else 0.0
         try:
             self.synth_on = AudioEngine.create_click_sound(150, 600, duration_ms=40, volume=0.3)
             self.synth_off = AudioEngine.create_click_sound(500, 100, duration_ms=60, volume=0.3)
@@ -623,8 +674,10 @@ class ZapretLauncher(ctk.CTk):
         self.render_loop() 
         self.update() 
         
+        # Тихий старт = только трей, НЕ в панели задач
+        # Если тихий старт включён — сворачиваем и скрываем из задач
         if self.start_minimized:
-            self.iconify()
+            self.withdraw()
             self.attributes("-alpha", 1) 
         else:
             self.deiconify() 
@@ -705,6 +758,11 @@ class ZapretLauncher(ctk.CTk):
             self.cleanup_old_exe() 
             enable_debug_privilege()
             self.check_and_install_files() 
+            
+            # При первом запуске копируем .exe в папку с данными для автозапуска
+            if getattr(self, 'is_first_run', False):
+                self.copy_exe_to_appdata()
+            
             self.after(0, self._refresh_bat_files) 
             if getattr(self, 'is_first_run', False):
                 self.after(2000, self.run_service_tests)
@@ -730,6 +788,32 @@ class ZapretLauncher(ctk.CTk):
                 try: os.remove(old_exe)
                 except: pass
         except: pass
+
+    def copy_exe_to_appdata(self):
+        """Копирует .exe в папку с данными для автозапуска"""
+        try:
+            src_exe = get_autorun_exe_path()
+            dst_exe = get_autorun_exe_path()
+            
+            # Если .exe уже есть в папке с данными, не копируем
+            if os.path.exists(src_exe):
+                return
+            
+            # Определяем текущий путь к .exe
+            if getattr(sys, 'frozen', False):
+                current_exe = sys.executable
+            else:
+                current_exe = os.path.abspath(sys.argv[0])
+            
+            # Копируем в папку с данными
+            dst_dir = os.path.dirname(dst_exe)
+            if not os.path.exists(dst_dir):
+                os.makedirs(dst_dir)
+            
+            shutil.copy2(current_exe, dst_exe)
+            log_error(f"Копировано .exe в папку с данными: {dst_exe}")
+        except Exception as e:
+            log_error(f"Ошибка копирования .exe: {e}")
 
 
     def s(self, v): return v * self.ui_scale
@@ -796,8 +880,9 @@ class ZapretLauncher(ctk.CTk):
                             log_error("Watchdog: auto-restart отключён, сбрасываю статус")
                             self.launcher_status = "OFF"
                             self.status_text = self.get_text("status_ready")
-                            try: self.tray_icon.notify("Обход упал!", "Zapret Launcher")
-                            except: pass
+                            if self.notifications_enabled:
+                                try: self.tray_icon.notify("Обход упал!", "Zapret Launcher")
+                                except: pass
                     else:
                         self._total_uptime_sec += 5
                         self._save_stats()
@@ -893,8 +978,9 @@ class ZapretLauncher(ctk.CTk):
 
             self.proxy_status = "ON"
             log_error(f"TgWsProxy запущен: {proxy_exe}")
-            try: self.tray_icon.notify("TgWsProxy включён", "Zapret Launcher")
-            except: pass
+            if self.notifications_enabled:
+                try: self.tray_icon.notify("TgWsProxy включён", "Zapret Launcher")
+                except: pass
         except Exception as e:
             log_error(f"TgWsProxy start error: {e}")
             self.proxy_status = "OFF"
@@ -1014,11 +1100,13 @@ class ZapretLauncher(ctk.CTk):
                     self.auto_repair = data.get("repair", False)
                     self.auto_restart = data.get("auto_restart", False)
                     self.proxy_enabled = data.get("proxy_enabled", False)
+                    self.notifications_enabled = data.get("notifications", True)
                     self.theme_name = data.get("theme", DEFAULT_THEME)
                     self.theme_color = self.themes_data.get(self.theme_name, self.themes_data[DEFAULT_THEME])
                     self.selected_bat = data.get("bat", self.bat_files[0] if self.bat_files else DEFAULT_BAT)
                     self.favorite_bat = data.get("fav", None)
                     self.current_lang = data.get("lang", "RU")
+                    self.exe_path = data.get("exe_path", None)
         except: pass
 
     def save_config(self):
@@ -1035,10 +1123,12 @@ class ZapretLauncher(ctk.CTk):
                     "repair": self.auto_repair,
                     "auto_restart": self.auto_restart,
                     "proxy_enabled": self.proxy_enabled,
+                    "notifications": self.notifications_enabled,
                     "theme": self.theme_name, 
                     "bat": self.selected_bat, 
                     "fav": self.favorite_bat, 
-                    "lang": self.current_lang
+                    "lang": self.current_lang,
+                    "exe_path": getattr(self, 'exe_path', None)
                 }, f)
             make_hidden(CONFIG_PATH) 
         except Exception as e:
@@ -1325,7 +1415,7 @@ class ZapretLauncher(ctk.CTk):
                 self.update_available = True
                 self.remote_version = remote_ver
                 self.update_state = "available"
-                if not silent:
+                if not silent and self.notifications_enabled:
                     try: self.tray_icon.notify(f"Обновление v{remote_ver}", "Нажмите чтобы установить")
                     except: pass
             else:
@@ -1390,6 +1480,13 @@ class ZapretLauncher(ctk.CTk):
                 self.changelog_open = False
             return
 
+        # Кнопка уведомлений (слева сверху)
+        if s(28) <= event.x <= s(52) and s(28) <= event.y <= s(52):
+            self.notifications_enabled = not self.notifications_enabled
+            self.save_config()
+            self.play_sound("ON" if self.notifications_enabled else "OFF")
+            return
+        
         # Кнопка настройки (шестеренка вверху справа)
         if math.sqrt(dx*dx + dy*dy) < s(25):
             self.settings_open = not self.settings_open
@@ -1440,7 +1537,9 @@ class ZapretLauncher(ctk.CTk):
                         else:
                             val = not getattr(self, attr)
                             setattr(self, attr, val)
-                            if attr == 'autorun_enabled': set_autorun(val)
+                            if attr == 'autorun_enabled': 
+                                if set_autorun(val): self.switch_autorun_pos = 1.0 if val else 0.0
+                            elif attr == 'notifications_enabled': self.switch_notifications_pos = 1.0 if val else 0.0
                             self.save_config()
                             self.play_sound("ON" if val else "OFF")
                         return True
@@ -1459,6 +1558,13 @@ class ZapretLauncher(ctk.CTk):
                     self.auto_restart = not self.auto_restart
                     self.save_config()
                     self.play_sound("ON" if self.auto_restart else "OFF")
+                    return
+                
+                # Ряд 5: Уведомления (Y=415..485)
+                if mx+s(20) <= event.x <= mx+s(125) and s(415) <= event.y <= s(485):
+                    self.notifications_enabled = not self.notifications_enabled
+                    self.save_config()
+                    self.play_sound("ON" if self.notifications_enabled else "OFF")
                     return
 
                 # Экспорт / Импорт конфига (Y=445..470)
@@ -1725,8 +1831,9 @@ class ZapretLauncher(ctk.CTk):
                 self._launch_count += 1
                 self._save_stats()
                 self.play_sound("ON")
-                try: self.tray_icon.notify("Обход включён", "Zapret Launcher")
-                except: pass
+                if self.notifications_enabled:
+                    try: self.tray_icon.notify("Обход включён", "Zapret Launcher")
+                    except: pass
             else:
                 self.launcher_status, self.status_text = "OFF", self.get_text("status_error")
         else: 
@@ -1752,8 +1859,9 @@ class ZapretLauncher(ctk.CTk):
         
         self.launcher_status, self.status_text = "OFF", self.get_text("status_ready")
         self.play_sound("OFF")
-        try: self.tray_icon.notify("Обход выключен", "Zapret Launcher")
-        except: pass
+        if self.notifications_enabled:
+            try: self.tray_icon.notify("Обход выключен", "Zapret Launcher")
+            except: pass
 
     def render_loop(self):
         try:
@@ -2104,6 +2212,27 @@ class ZapretLauncher(ctk.CTk):
             # КНОПКА МЕНЮ
             gc_b = active_color if self.settings_open else "white"
             self.canvas.create_oval(w-s(52), s(28), w-s(28), s(52), outline=gc_b, width=2); self.canvas.create_oval(w-s(44), s(36), w-s(36), s(44), fill=gc_b, outline="")
+            
+            # КНОПКА УВЕДОМЛЕНИЙ (слева сверху) - красивая иконка
+            notif_x, notif_y = s(40), s(40)
+            notif_hvr = (s(28) <= self.mouse_x <= s(52) and s(28) <= self.mouse_y <= s(52))
+            notif_col = "#00ff88" if self.notifications_enabled else "#5a6591"
+            
+            # Круг кнопки
+            if notif_hvr: self.canvas.create_oval(s(28), s(28), s(52), s(52), fill="#1a1e3d", outline="")
+            self.canvas.create_oval(s(28), s(28), s(52), s(52), outline=notif_col, width=2)
+            
+            # Иконка громкости
+            if self.notifications_enabled:
+                # Громкость (дуги снизу)
+                self.canvas.create_arc(notif_x-s(5), notif_y-s(2), notif_x+s(5), notif_y+s(6), start=180, extent=180, style=tk.ARC, outline=notif_col, width=2)
+                self.canvas.create_arc(notif_x-s(3), notif_y-s(2), notif_x+s(3), notif_y+s(4), start=180, extent=180, style=tk.ARC, outline=notif_col, width=2)
+                # Круг в центре
+                self.canvas.create_oval(notif_x-s(2), notif_y-s(2), notif_x+s(2), notif_y+s(2), fill=notif_col, outline="")
+            else:
+                # Крестик (выключено)
+                self.canvas.create_line(notif_x-s(4), notif_y-s(4), notif_x+s(4), notif_y+s(4), fill=notif_col, width=2)
+                self.canvas.create_line(notif_x-s(4), notif_y+s(4), notif_x+s(4), notif_y-s(4), fill=notif_col, width=2)
 
         except Exception as e: 
             log_error(f"Render Error: {e}")
