@@ -1,7 +1,7 @@
 {
   "version": "17.3",
-  "hash": "24472F172321BDE84D38AC1AD5285C3C5EC50B3649C9B0D7816DDBFC51408F5F",
-  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.3/Zapret.exe",
+  "hash": "18B8B2055836977D41E944F89449D779C0735CB2B05AACA60B9C504597F85256",
+  "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.4/Zapret.exe",
   "changelog": [
     "+ Кнопка отключения уведомлений (только на главном экране, слева сверху)",
     "+ Исправлен автозапуск — теперь через ярлык (работает при переносе .exe)",
