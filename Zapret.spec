@@ -2,15 +2,15 @@
 
 
 a = Analysis(
-    ['zapret_new.py'],
+    ['zapret_new_win.py'],
     pathex=[],
     binaries=[],
-    datas=[('zapret_data.zip', '.'), ('icon.ico', '.')],
-    hiddenimports=[],
+    datas=[('zapret_data.zip', '.'), ('icon.ico', '.'), ('sounds', 'sounds')],
+    hiddenimports=['pypresence'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['numpy', 'numpy.libs', 'yaml', 'PIL.AvifImagePlugin'],
     noarchive=False,
     optimize=0,
 )
@@ -26,7 +26,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

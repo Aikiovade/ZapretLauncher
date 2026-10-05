@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZapretLauncher</title>
+<style>
+  :root{
+    --accent:#00ff88; --bg:#0a0b1e; --panel:#0e1124; --panel2:#15182e;
+    --muted:#5a6591; --text:#e8ecff; --line:#2a305e;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; font-family:"Segoe UI",system-ui,sans-serif}
+  body{background:var(--bg); color:var(--text); overflow:hidden; user-select:none}
+  body.light{
+    --bg:#f2f4fb; --panel:#ffffff; --panel2:#e9edfb; --muted:#66708f; --text:#131735; --line:#c7cff0;
+  }
+  #app{display:flex; flex-direction:column; height:100vh; padding:18px 22px}
+  header{display:flex; align-items:center; justify-content:space-between; position:relative}
+  h1{font-size:26px; letter-spacing:2px}
+  h1 span{color:var(--accent)}
+  #sub{color:var(--muted); font-size:12px}
+  #gear{cursor:pointer; font-size:22px; color:var(--muted)}
+  #gear:hover{color:var(--accent)}
+  #ver{position:absolute; left:0; bottom:-16px; font-size:11px; color:var(--muted); cursor:pointer}
+  main{flex:1; display:flex; align-items:center; justify-content:center; position:relative}
+  #circle{
+    width:300px; height:300px; border-radius:50%; border:4px solid var(--line);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+    cursor:pointer; transition:border-color .25s, box-shadow .25s; background:radial-gradient(circle at 50% 45%, #10132c 0%, var(--bg) 70%);
+  }
+  #circle.on{border-color:var(--accent); box-shadow:0 0 45px -8px var(--accent)}
+  #circle.busy{opacity:.7}
+  #timer{font-family:Consolas,monospace; font-size:34px; font-weight:700}
+  #action{font-size:30px; font-weight:800; letter-spacing:1px}
+  #strat{font-family:Consolas,monospace; font-size:12px; color:var(--muted)}
+  #stratctrl{margin-top:10px; display:flex; gap:8px; align-items:center}
+  button.chip{
+    background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:6px 12px; cursor:pointer; font-size:12px;
+  }
+  button.chip:hover{border-color:var(--accent); color:var(--accent)}
+  #hud{display:flex; gap:8px; justify-content:center; flex-wrap:wrap}
+  .hudchip{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 10px;
+    font-family:Consolas,monospace; font-size:12px; color:var(--muted)}
+  .hudchip b{color:var(--text); font-weight:600}
+  .hudchip.ok b{color:var(--accent)} .hudchip.fail b{color:#ff5050}
+  #testbar{display:none; margin-top:10px; text-align:center; font-family:Consolas,monospace; font-size:12px; color:#ff9900}
+  #upd{display:none; margin-top:10px; text-align:center}
+  #upd button{background:#143524; border-color:var(--accent); color:var(--accent)}
+  /* drawer */
+  #overlay{position:fixed; inset:0; background:rgba(0,0,0,.45); display:none}
+  #drawer{
+    position:fixed; top:0; right:-300px; width:290px; height:100%; background:var(--panel);
+    border-left:1px solid var(--line); padding:18px; overflow-y:auto; transition:right .22s;
+  }
+  #drawer.open{right:0} #overlay.open{display:block}
+  .row{display:flex; justify-content:space-between; align-items:center; margin:10px 0; font-size:13px}
+  .tgl{width:42px; height:22px; background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+    position:relative; cursor:pointer; transition:border-color .2s}
+  .tgl::after{content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+    background:var(--muted); transition:left .18s, background .18s}
+  .tgl.on{border-color:var(--accent)} .tgl.on::after{left:22px; background:var(--accent)}
+  .themes{display:flex; gap:10px; margin:12px 0; justify-content:center}
+  .dot{width:22px; height:22px; border-radius:50%; cursor:pointer; border:2px solid transparent}
+  .dot.sel{border-color:#fff}
+  .btns{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px}
+  h3{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin:14px 0 6px}
+  /* modals */
+  .modal{position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.55)}
+  .modal.open{display:flex}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:88%; max-height:80%; overflow:auto}
+  .strat{display:flex; justify-content:space-between; padding:8px 10px; border-radius:8px; cursor:pointer; font-family:Consolas,monospace; font-size:12px}
+  .strat:hover{background:var(--panel2)} .strat.sel{outline:1px solid var(--accent)}
+  .star{color:gold}
+  #log li{font-family:Consolas,monospace; font-size:11px; margin:2px 0; color:var(--muted)}
+  #log li b{color:var(--text)}
+  #toasts{position:fixed; bottom:14px; right:14px; display:flex; flex-direction:column; gap:8px; z-index:50}
+  .toast{background:var(--panel2); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:8px; padding:10px 14px; font-size:12px; color:var(--text); max-width:280px;
+    animation:tin .18s ease-out; box-shadow:0 6px 20px -8px #000}
+  @keyframes tin{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+  #bg{position:fixed; inset:0; z-index:0; pointer-events:none}
+  #app{position:relative; z-index:1}
+  #splash{position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; background:radial-gradient(circle at 50% 45%, #10132c 0%, #0a0b1e 70%);
+    transition:opacity .45s ease; cursor:pointer}
+  #splash.hide{opacity:0; pointer-events:none}
+  #splash .ring{position:absolute; width:120px; height:120px; border:2px solid var(--accent);
+    border-radius:50%; opacity:0; animation:ring 1.8s ease-out infinite}
+  #splash .r2{animation-delay:.35s} #splash .r3{animation-delay:.7s}
+  @keyframes ring{0%{transform:scale(.6); opacity:.9} 100%{transform:scale(2.3); opacity:0}}
+  .slogo{font-size:34px; font-weight:800; letter-spacing:4px; color:var(--text);
+    animation:logoIn .7s cubic-bezier(.2,.9,.25,1.2) both}
+  .slogo span{color:var(--accent); text-shadow:0 0 26px var(--accent)}
+  .ssub{margin-top:8px; font-size:11px; letter-spacing:5px; color:var(--muted); animation:logoIn .9s .15s both}
+  @keyframes logoIn{from{opacity:0; transform:scale(.8) translateY(8px)} to{opacity:1; transform:none}}
+  .sdots{display:flex; gap:6px; margin-top:26px}
+  .sdots i{width:8px; height:8px; border-radius:50%; background:var(--accent); opacity:.35; animation:dot 1s infinite}
+  .sdots i:nth-child(2){animation-delay:.15s} .sdots i:nth-child(3){animation-delay:.3s}
+  @keyframes dot{0%,100%{opacity:.25; transform:translateY(0)} 50%{opacity:1; transform:translateY(-5px)}}
+  #circle.on{animation:pulse 2.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 45px -8px var(--accent)} 50%{box-shadow:0 0 72px -2px var(--accent)}}
+  body.lowq .toast{animation:none}
+  body.mode-simple .adv{display:none}
+  body.lowq #circle{transition:none}
+  #spark{background:var(--panel); border:1px solid var(--line); border-radius:8px}
+  body.compact #app{padding:6px}
+  body.compact header, body.compact #hud, body.compact #stratctrl,
+  body.compact #testbar, body.compact #upd{display:none}
+  body.compact main{height:100%}
+  body.compact #circle{width:120px; height:120px; border-width:3px; gap:2px}
+  body.compact #timer{font-size:18px}
+  body.compact #action{font-size:18px}
+  body.compact #statusline{font-size:10px}
+  button.chip.on{border-color:var(--accent); color:var(--accent)}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="splash">
+  <div class="ring r1"></div>
+  <div class="ring r2"></div>
+  <div class="ring r3"></div>
+  <div class="slogo">ZA<span>PRET</span></div>
+  <div class="ssub">L A U N C H E R</div>
+  <div class="sdots"><i></i><i></i><i></i></div>
+</div>
+<div id="app">
+  <header>
+    <div>
+      <h1>ZA<span>PRET</span></h1>
+      <div id="sub" data-i18n="app_sub">DPI bypass launcher</div>
+      <div id="ver"></div>
+    </div>
+    <div id="gear" data-i18n-title="gear_title" title="Настройки">&#9881;</div>
+  </header>
+
+  <main>
+    <div style="text-align:center">
+      <div id="circle" onclick="toggle()" data-i18n-title="tip_toggle">
+        <div id="timer" style="display:none">00:00:00</div>
+        <div id="action">START</div>
+        <div id="statusline" style="font-size:12px;color:var(--muted)">ГОТОВ</div>
+      </div>
+      <div id="stratctrl">
+        <button class="chip" onclick="openStrategies()" data-i18n="btn_strategy" data-i18n-title="tip_strategy">Стратегия</button>
+        <span id="strat">general (ALT).bat</span>
+      </div>
+      <div id="testbar"></div>
+      <div id="upd"><button class="chip" onclick="doUpdate()" data-i18n="btn_update_install">Установить обновление</button></div>
+    </div>
+  </main>
+
+  <div id="hud">
+    <div class="hudchip" id="cpu">CPU <b>0%</b></div>
+    <div class="hudchip" id="ram">RAM <b>0%</b></div>
+    <div class="hudchip" id="ping">PING <b>---</b></div>
+    <div class="hudchip" id="bypass">BYPASS <b>---</b></div>
+    <div class="hudchip" id="srv">SRV <b>--</b></div>
+    <canvas id="spark" width="180" height="40" data-i18n-title="spark_title" title="CPU (зелёный) и RAM (синий) за последнюю минуту"></canvas>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<div id="overlay" onclick="closeDrawer()"></div>
+<div id="drawer">
+  <h3 data-i18n="settings_title">Настройки</h3>
+  <div class="row"><span data-i18n="auto_run">Автозапуск</span><div class="tgl" id="t-autorun" onclick="tgl('autorun',this)"></div></div>
+  <div class="row"><span data-i18n="notifications">Уведомления</span><div class="tgl" id="t-notifications" onclick="tgl('notifications',this)"></div></div>
+  <div class="row"><span data-i18n="auto_restart_lbl">Авто-рестарт</span><div class="tgl" id="t-auto_restart" onclick="tgl('auto_restart',this)"></div></div>
+  <div class="row"><span data-i18n="minimal_mode">Минимализм</span><div class="tgl" id="t-minimal" onclick="tgl('minimal',this)"></div></div>
+  <div class="row"><span data-i18n="snow_fx">Эффекты</span><div class="tgl" id="t-snow" onclick="tgl('snow',this)"></div></div>
+  <div class="row"><span data-i18n="start_min">Тихий старт</span><div class="tgl" id="t-minimized" onclick="tgl('minimized',this)"></div></div>
+  <div class="row"><span><span data-i18n="lang_label">Язык</span> <b id="langcode" style="color:var(--muted)">RU</b></span><div class="tgl" id="t-lang" onclick="tgl('lang',this)"></div></div>
+  <div class="row"><span data-i18n="update_channel_lbl">Канал обновлений</span><span>
+    <button class="chip" id="ch-stable" onclick="setChannel('stable')">stable</button>
+    <button class="chip" id="ch-beta" onclick="setChannel('beta')">beta</button></span></div>
+  <div class="row" style="flex-wrap:wrap;gap:6px"><span data-i18n="quality_lbl">Качество</span>
+    <span style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="chip" id="q-auto" onclick="setQuality('auto')" data-i18n="quality_auto">Авто</button>
+      <button class="chip" id="q-low" onclick="setQuality('low')" data-i18n="quality_low">Низкое</button>
+      <button class="chip" id="q-medium" onclick="setQuality('medium')" data-i18n="quality_medium">Среднее</button>
+      <button class="chip" id="q-high" onclick="setQuality('high')" data-i18n="quality_high">Высокое</button>
+    </span></div>
+  <div class="row"><span data-i18n="mode_lbl">Режим интерфейса</span><span>
+    <button class="chip" id="m-simple" onclick="setMode('simple')" data-i18n="mode_simple">Простой</button>
+    <button class="chip" id="m-advanced" onclick="setMode('advanced')" data-i18n="mode_advanced">Обычный</button>
+    <button class="chip" id="m-expert" onclick="setMode('expert')" data-i18n="mode_expert">Эксперт</button></span></div>
+  <div class="row"><span data-i18n="battery_lbl">Режим батареи</span><div class="tgl" id="t-battery_saver" onclick="tgl('battery_saver',this)"></div></div>
+  <div class="row"><span data-i18n="gaming_lbl">Гейминг-режим</span><div class="tgl" id="t-gaming_mode" onclick="tgl('gaming_mode',this)"></div></div>
+  <div class="row"><span data-i18n="auto_rotate_lbl">Авто-ротация при деградации</span><div class="tgl" id="t-auto_rotate" onclick="tgl('auto_rotate',this)"></div></div>
+  <div class="row"><span data-i18n="discord_rpc_lbl">Discord статус</span><div class="tgl" id="t-discord_rpc" onclick="tgl('discord_rpc',this)"></div></div>
+  <div class="row"><span data-i18n="intro_lbl">Анимация запуска</span><div class="tgl" id="t-intro" onclick="tgl('intro',this)"></div></div>
+  <div id="discordhint" style="font-size:11px;color:var(--muted);margin:-6px 0 8px 0"></div>
+  <div class="row"><span data-i18n="light_lbl">Светлая тема</span><div class="tgl" id="t-theme_mode" onclick="tgl('theme_mode',this)"></div></div>
+  <div class="row"><span data-i18n="idle_lbl">Скрывать при простое (мин)</span>
+    <input id="idlemin" type="number" min="0" max="240" style="width:70px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px"></div>
+  <div class="row"><span data-i18n="hotkey_lbl">Хоткей вкл/выкл</span>
+    <input id="hotkey" readonly style="width:130px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-family:Consolas,monospace;font-size:12px;text-align:center"></div>
+  <h3 data-i18n="theme">Тема</h3>
+  <div class="themes" id="themes"></div>
+  <div style="display:flex;justify-content:center;gap:8px;align-items:center;margin-bottom:6px">
+    <span style="font-size:11px;color:var(--muted)" data-i18n="custom_color">Свой цвет:</span>
+    <input type="color" id="accentpick" title="Выбрать свой акцентный цвет"
+      style="width:34px;height:24px;border:none;background:none;cursor:pointer">
+  </div>
+  <div class="btns">
+    <button class="chip" onclick="openProxy()">TgProxy</button>
+    <button class="chip" onclick="api('open_logs')" data-i18n="logs">Логи</button>
+    <button class="chip" onclick="api('run_tests')" class="chip adv" data-i18n="btn_tests">Тесты</button>
+    <button class="chip" onclick="api('check_update')" class="chip adv" data-i18n="btn_update_check">Обновление</button>
+    <button class="chip" id="rollbackbtn" class="chip adv" style="display:none" onclick="doRollback()" data-i18n="btn_rollback">Откатиться</button>
+    <button class="chip" onclick="api('export_config')" class="chip adv" data-i18n="btn_export">Экспорт</button>
+    <button class="chip" onclick="api('import_config')" class="chip adv" data-i18n="btn_import">Импорт</button>
+    <button class="chip" onclick="updateZapret()" class="chip adv" data-i18n="btn_pkg">Пакет Flowseal</button>
+    <button class="chip" onclick="openLists()" class="chip adv" data-i18n="btn_lists">Списки</button>
+    <button class="chip" onclick="autoTest()" class="chip adv" data-i18n="btn_autotest">Авто-подбор</button>
+    <button class="chip" onclick="probeNow()" class="chip adv" data-i18n="btn_probe">Проверить</button>
+    <button class="chip" onclick="runSpeedtest()" class="chip adv" data-i18n="btn_speedtest">Speedtest</button>
+    <button class="chip" onclick="netProfile()" class="chip adv" data-i18n="net_profile">Профиль сети</button>
+    <button class="chip" onclick="showChangelog()" data-i18n="btn_changelog">Что нового</button>
+    <button class="chip" onclick="setCompact(true)" data-i18n="btn_compact">Мини-оверлей</button>
+    <button class="chip" onclick="api('report_problem')" data-i18n="btn_report">Сообщить о проблеме</button>
+    <button class="chip" onclick="api('quit_app')" data-i18n="btn_quit">Выход</button>
+  </div>
+</div>
+
+<div class="modal" id="stratmodal"><div class="card" style="width:420px">
+  <h3><span data-i18n="active_strategy">Активная стратегия</span> <span class="star" id="favstar" onclick="api('set_favorite')" style="cursor:pointer">&#9734;</span></h3>
+  <input id="stratq" placeholder="Поиск..."
+    style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px">
+  <div style="display:flex;gap:8px;margin-bottom:8px">
+    <button class="chip" id="sortaz" onclick="setSort('az')" data-i18n="sort_az">A-Z</button>
+    <button class="chip" id="sortscore" onclick="setSort('score')" data-i18n="sort_score">По тестам</button>
+    <button class="chip" onclick="importBat()" class="chip adv" data-i18n="btn_import_bat">Импорт .bat</button>
+  </div>
+  <div id="stratlist"></div>
+</div></div>
+
+<div class="modal" id="changelog"><div class="card">
+  <h3 data-i18n="btn_changelog">Что нового</h3><div id="log"></div>
+</div></div>
+
+<div class="modal" id="discordmodal"><div class="card" style="width:430px">
+  <h3 data-i18n="discord_client_id_title">Discord Client ID</h3>
+  <div style="font-size:12px;color:var(--muted);margin:6px 0;line-height:1.4" data-i18n="discord_client_id_hint">Создайте приложение...</div>
+  <input id="discordid" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:Consolas,monospace;font-size:13px">
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+    <button class="chip" onclick="saveDiscordId()" data-i18n="btn_save">Сохранить</button>
+    <button class="chip" onclick="closeModals()" data-i18n="btn_close">Закрыть</button>
+  </div>
+</div></div>
+
+<div class="modal" id="wizmodal"><div class="card" style="width:440px">
+  <h3 data-i18n="wiz_title">Первый запуск</h3>
+  <div id="wizbody" style="font-size:13px;line-height:1.5;margin:8px 0"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
+    <button class="chip" id="wiznext" onclick="wizNext()" data-i18n="wiz_next">Далее</button>
+    <button class="chip" id="wizmanual" style="display:none" onclick="wizManual()" data-i18n="wiz_open_strategies">Выбрать вручную</button>
+    <button class="chip adv" id="wizauto" style="display:none" onclick="wizAutoTest()" data-i18n="btn_autotest">Авто-подбор</button>
+    <button class="chip" onclick="closeModals()" data-i18n="btn_close">Закрыть</button>
+  </div>
+</div></div>
+
+<div class="modal" id="speedmodal"><div class="card" style="width:460px">
+  <h3 data-i18n="speedtest_title">Доступность и задержки</h3>
+  <div id="speedbody"></div>
+  <div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button class="chip" onclick="closeModals()" data-i18n="btn_close">Закрыть</button>
+  </div>
+</div></div>
+
+<div class="modal" id="proxymodal"><div class="card" style="width:440px">
+  <h3>TgProxy</h3>
+  <div class="row"><span data-i18n="proxy_status">Статус</span><b id="proxystat">OFF</b></div>
+  <div class="row"><span data-i18n="proxy_port">Порт</span>
+    <input id="proxyport" type="number" min="1" max="65535" style="width:110px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px"></div>
+  <div class="row"><span data-i18n="proxy_secret">Секрет</span>
+    <input id="proxysecret" style="width:230px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-family:Consolas,monospace;font-size:11px"></div>
+  <h3 data-i18n="proxy_link_lbl">Ссылка для Telegram</h3>
+  <input id="proxylink" readonly style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-family:Consolas,monospace;font-size:11px">
+  <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;flex-wrap:wrap">
+    <button class="chip" onclick="copyProxyLink()" data-i18n="btn_copy">Копировать</button>
+    <button class="chip" onclick="saveProxy()" data-i18n="btn_save">Сохранить</button>
+    <button class="chip" onclick="proxyToggle()" data-i18n="btn_start_stop">Старт/Стоп</button>
+    <button class="chip" onclick="closeModals()" data-i18n="btn_close">Закрыть</button>
+  </div>
+</div></div>
+
+<div class="modal" id="listsmodal"><div class="card" style="width:460px">
+  <h3 data-i18n="lists_title">Пользовательские списки</h3>
+  <select id="listpick" class="chip" style="width:100%;margin:8px 0"></select>
+  <textarea id="listtext" style="width:100%;height:260px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font-family:Consolas,monospace;font-size:12px"></textarea>
+  <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+    <button class="chip" onclick="saveList()" data-i18n="btn_save">Сохранить</button>
+    <button class="chip" onclick="closeModals()" data-i18n="btn_close">Закрыть</button>
+  </div>
+</div></div>
+
+<script>
+let S = {settings:{}}, LANG = '', SORT = 'az';
+let splashDone = false, bgOn = true, bgParticles = [];
+function hideSplash(){
+  if(splashDone) return;
+  splashDone = true;
+  const el = document.getElementById('splash');
+  if(el){ el.classList.add('hide'); setTimeout(()=>el.remove(), 600); }
+}
+document.getElementById('splash').addEventListener('click', hideSplash);
+setTimeout(hideSplash, 5000);
+const bgCanvas = document.getElementById('bg'), bgCtx = bgCanvas.getContext('2d');
+function bgResize(){ bgCanvas.width = innerWidth; bgCanvas.height = innerHeight; }
+bgResize();
+addEventListener('resize', bgResize);
+function bgInit(n){
+  bgParticles = Array.from({length:n}, ()=>({x:Math.random()*bgCanvas.width, y:Math.random()*bgCanvas.height,
+    r:1+Math.random()*2, v:.2+Math.random()*.7, a:.12+Math.random()*.35}));
+}
+bgInit(45);
+function bgTick(){
+  requestAnimationFrame(bgTick);
+  if(!bgOn || document.hidden) return;
+  bgCtx.clearRect(0,0,bgCanvas.width,bgCanvas.height);
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00ff88';
+  bgCtx.fillStyle = accent;
+  for(const p of bgParticles){
+    p.y -= p.v;
+    if(p.y < -4){ p.y = bgCanvas.height + 4; p.x = Math.random()*bgCanvas.width; }
+    bgCtx.globalAlpha = p.a;
+    bgCtx.beginPath(); bgCtx.arc(p.x, p.y, p.r, 0, 6.283); bgCtx.fill();
+  }
+  bgCtx.globalAlpha = 1;
+}
+requestAnimationFrame(bgTick);
+
+function scoreOf(name){ const sc = (S.scores||{})[name]; return (typeof sc === 'number') ? sc : null; }
+function setSort(mode){
+  SORT = mode;
+  document.getElementById('sortaz').classList.toggle('on', mode==='az');
+  document.getElementById('sortscore').classList.toggle('on', mode==='score');
+  renderStratList();
+}
+
+function T(key, vars){
+  const d = (S.texts || {});
+  let s = (d[key] !== undefined) ? d[key] : key;
+  if(vars){ for(const k in vars){ s = String(s).split('{'+k+'}').join(vars[k]); } }
+  return s;
+}
+function applyI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent = T(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-title]').forEach(el=>{ el.title = T(el.dataset.i18nTitle); });
+  const lc = document.getElementById('langcode');
+  if(lc) lc.textContent = (S.settings.lang || 'RU');
+  const q = document.getElementById('stratq');
+  if(q) q.placeholder = T('search_ph', {n: (S.strategies||[]).length});
+}
+
+async function api(method, ...args){
+  try { return await window.pywebview.api[method](...args); }
+  catch(e){ console.log(method, e); return null; }
+}
+function toggle(){ api('toggle'); setTimeout(poll, 300); }
+function renderStratList(){
+  const q = (document.getElementById('stratq').value || '').toLowerCase();
+  const list = document.getElementById('stratlist'); list.innerHTML = '';
+  const meta = S.strategy_meta || {};
+  let names = (S.strategies||[]).filter(n=>{
+    if(n.toLowerCase().includes(q)) return true;
+    const tags = (meta[n] && meta[n].tags) || [];
+    return tags.some(t=>String(t).toLowerCase().includes(q));
+  });
+  if(SORT==='score') names = names.slice().sort((a,b)=>(scoreOf(b)??-1)-(scoreOf(a)??-1));
+  names.forEach(name=>{
+    const sc = scoreOf(name);
+    const tags = ((meta[name] && meta[name].tags) || []).slice(0,3).join(' · ');
+    const right = (name===S.strategy?'&#10003; ':'') + (sc!==null ? Math.round(sc*100)+'%' : '');
+    const d=document.createElement('div');
+    d.className='strat'+(name===S.strategy?' sel':'');
+    d.innerHTML=`<span>${name===S.favorite?'<b class="star">&#9733;</b> ':''}${name}` +
+      (tags?` <span style="color:var(--muted)">[${tags}]</span>`:'') + `</span><span>${right}</span>`;
+    d.onclick=async()=>{ await api('select_strategy',name); closeModals(); poll(); };
+    list.appendChild(d);
+  });
+}
+function openStrategies(){
+  document.getElementById('stratq').value = '';
+  document.getElementById('stratq').placeholder = T('search_ph', {n: (S.strategies||[]).length});
+  document.getElementById('stratq').oninput = renderStratList;
+  document.getElementById('sortaz').classList.toggle('on', SORT==='az');
+  document.getElementById('sortscore').classList.toggle('on', SORT==='score');
+  renderStratList();
+  document.getElementById('stratmodal').classList.add('open');
+  document.getElementById('stratq').focus();
+}
+async function setCompact(v){ await api('set_compact', v); poll(); }
+async function setChannel(c){ await api('set_setting', 'update_channel', c); poll(); }
+async function setQuality(q){ await api('set_setting', 'quality', q); poll(); }
+async function setMode(m){ await api('set_setting', 'ui_mode', m); poll(); }
+async function doRollback(){
+  if(!confirm(T('confirm_rollback'))) return;
+  const r = await api('rollback_update');
+  if(r && !r.ok) toast(T('rollback_fail'));
+}
+let WIZ_STEP = 0;
+function wizRender(){
+  const body = document.getElementById('wizbody');
+  const texts = [T('wiz_s1'), T('wiz_s2'), T('wiz_s3')];
+  body.textContent = texts[Math.min(WIZ_STEP, 2)];
+  document.getElementById('wiznext').style.display = WIZ_STEP >= 2 ? 'none' : '';
+  document.getElementById('wizmanual').style.display = WIZ_STEP === 1 ? '' : 'none';
+  document.getElementById('wizauto').style.display = WIZ_STEP === 1 ? '' : 'none';
+  if(WIZ_STEP === 2) setTimeout(closeModals, 2500);
+}
+function openWizard(){ WIZ_STEP = 0; wizRender(); document.getElementById('wizmodal').classList.add('open'); }
+function wizNext(){ WIZ_STEP = Math.min(2, WIZ_STEP + 1); wizRender(); }
+function wizManual(){ window._wizDone = true; closeModals(); openStrategies(); }
+async function wizAutoTest(){ window._wizDone = true; closeModals(); await autoTest(); }
+async function runSpeedtest(){
+  const r = await api('speedtest');
+  const box = document.getElementById('speedbody'); box.innerHTML = '';
+  if(!r || !r.ok){ box.textContent = T('speedtest_none'); }
+  else {
+    const add = (e, label)=>{
+      if(!e) return;
+      const d = document.createElement('div'); d.style.margin = '8px 0'; d.style.fontSize = '12px';
+      d.innerHTML = `<b style="color:var(--accent)">${label}</b> · ${e.ts} · ${e.status} · <b>${Math.round(e.score*100)}%</b><br>` +
+        Object.entries(e.results || {}).map(([k,v])=>`${k}: ${v>=0 ? v+T('ms_suffix') : 'FAIL'}`).join(' · ');
+      box.appendChild(d);
+    };
+    add(r.previous, 'PREV');
+    add(r.current, 'NOW');
+    if(r.history && r.history.length > 2){
+      const h = document.createElement('div'); h.style.cssText = 'margin-top:8px;font-size:11px;color:var(--muted)';
+      h.textContent = r.history.map(e=>`${e.ts} ${e.status} ${Math.round(e.score*100)}%`).join(' | ');
+      box.appendChild(h);
+    }
+  }
+  document.getElementById('speedmodal').classList.add('open');
+}
+function openDiscordId(){
+  const inp = document.getElementById('discordid');
+  inp.value = (S.discord && S.discord.client_id_set) ? '' : '';
+  document.getElementById('discordmodal').classList.add('open');
+  inp.focus();
+}
+async function saveDiscordId(){
+  const r = await api('set_discord_client_id', document.getElementById('discordid').value.trim());
+  if(r && r.ok){ closeModals(); toast(T('saved_ok')); }
+  else toast(T('save_fail'));
+  poll();
+}
+async function importBat(){
+  const r = await api('import_bat');
+  if(r && r.ok){
+    toast(T('imported_ok', {name: r.strategy}));
+    poll(); renderStratList();
+  } else { toast(T('import_fail')); }
+}
+document.body.addEventListener('click', e=>{
+  if(document.body.classList.contains('compact')){
+    e.stopPropagation(); e.preventDefault(); setCompact(false);
+  }
+}, true);
+function hotkeyMatches(e, spec){
+  const parts = String(spec || 'Ctrl+Shift+Z').split('+').map(p=>p.trim().toLowerCase()).filter(Boolean);
+  const key = parts.filter(p=>!['ctrl','shift','alt'].includes(p))[0] || '';
+  const needCtrl = parts.includes('ctrl'), needShift = parts.includes('shift'), needAlt = parts.includes('alt');
+  const k = (e.key || '').toLowerCase();
+  const ruMap = {'я':'z','с':'c'};
+  const keyOk = k === key || ruMap[k] === key;
+  return e.ctrlKey === needCtrl && e.shiftKey === needShift && e.altKey === needAlt && keyOk;
+}
+document.addEventListener('keydown', e=>{
+  const tag = (e.target && e.target.tagName) || '';
+  if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if(hotkeyMatches(e, (S.settings || {}).hotkey_toggle)){
+    e.preventDefault(); toggle(); return;
+  }
+  if(e.ctrlKey && e.shiftKey && (e.key==='c'||e.key==='C'||e.key==='с'||e.key==='С')){
+    e.preventDefault(); setCompact(!S.compact);
+  }
+  if(e.key==='F12'){ e.preventDefault(); document.getElementById('gear').click(); }
+});
+function closeModals(){ document.querySelectorAll('.modal').forEach(m=>m.classList.remove('open')); }
+function openDrawer(){ document.getElementById('drawer').classList.add('open'); document.getElementById('overlay').classList.add('open'); }
+function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); document.getElementById('overlay').classList.remove('open'); }
+document.getElementById('gear').onclick=openDrawer;
+document.getElementById('ver').onclick=showChangelog;
+async function tgl(key, el){
+  let val;
+  if(key==='lang'){ val = (S.settings.lang||'RU')==='RU' ? 'EN':'RU'; }
+  else if(key==='theme_mode'){ val = (S.settings.theme_mode||'dark')==='light' ? 'dark':'light'; el.classList.toggle('on', val==='light'); }
+  else { val = !S.settings[key]; el.classList.toggle('on', val); }
+  await api('set_setting', key, val); poll();
+}
+async function autoTest(){
+  if(!confirm(T('confirm_autotest'))) return;
+  const r = await api('auto_test_strategies');
+  if(!r || !r.ok) toast(T('autotest_fail'));
+  poll();
+}
+async function probeNow(){
+  const r = await api('probe_now');
+  if(r && r.services){
+    const lines = Object.entries(r.services).map(([k,v])=>`${k}: ${v>=0 ? v+T('ms_suffix') : 'FAIL'}`);
+    alert(lines.join('\n'));
+  }
+}
+function toast(msg){
+  const box = document.getElementById('toasts');
+  const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(()=>{ el.style.opacity = '0'; setTimeout(()=>el.remove(), 250); }, 4200);
+}
+window.alert = function(msg){ toast(String(msg)); };
+const hist = {cpu: [], ram: [], ping: []};
+let HIST_MAX = 90;
+function drawSpark(){
+  const cv = document.getElementById('spark'), ctx = cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const draw = (arr, color, scale, norm)=>{
+    if(arr.length < 2) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+    arr.forEach((v,i)=>{ const x = i*(cv.width/(Math.max(scale, arr.length)-1));
+      const val = norm ? norm(v) : v;
+      const y = cv.height - (val/100)*(cv.height-4) - 2;
+      i ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+    ctx.stroke();
+  };
+  draw(hist.cpu, getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#00ff88', HIST_MAX);
+  draw(hist.ram, '#4a7dff', HIST_MAX);
+  draw(hist.ping, '#ffd24a', HIST_MAX, v=>Math.min(100, (v/300)*100));
+}
+function pushHist(cpu, ram, ping){
+  hist.cpu.push(Number(cpu)||0); hist.ram.push(Number(ram)||0);
+  const p = (typeof ping === 'number' && ping >= 0) ? ping : (hist.ping.length ? hist.ping[hist.ping.length-1] : 0);
+  hist.ping.push(p);
+  if(hist.cpu.length > HIST_MAX){ hist.cpu.shift(); hist.ram.shift(); hist.ping.shift(); }
+  drawSpark();
+}
+async function doUpdate(){
+  const r = await api('perform_update');
+  if(r && !r.ok) toast(T('update_apply_fail'));
+}
+async function updateZapret(){
+  const r = await api('check_zapret_update');
+  if(r && r.available){
+    if(confirm(T('pkg_install_q', {tag: r.latest}))){
+      const u = await api('update_zapret');
+      alert(u && u.ok ? T('pkg_installed', {msg: u.message}) : T('pkg_error', {msg: (u && u.message) || '?'}));
+      poll();
+    }
+  } else if(r && r.ok){ alert(T('pkg_latest')); }
+  else alert(T('pkg_check_fail'));
+}
+async function netProfile(){
+  const net = (S.network && (S.network.ssid || S.network.network_key)) || '?';
+  if(!confirm(T('net_remember_q', {s: S.strategy, n: net}))) return;
+  const r = await api('save_network_profile');
+  alert(r && r.ok ? T('net_saved', {n: r.network}) : T('net_fail'));
+  poll();
+}
+let listsCache = null;
+async function openProxy(){
+  const r = await api('get_proxy_info');
+  if(r){
+    document.getElementById('proxyport').value = r.port || '';
+    document.getElementById('proxysecret').value = r.secret || '';
+    document.getElementById('proxylink').value = r.link || '';
+    document.getElementById('proxystat').textContent =
+      (r.running ? T('status_on') : 'OFF') + (r.running ? (r.health ? ' • OK' : ' • FAIL') : '');
+  }
+  document.getElementById('proxymodal').classList.add('open');
+}
+async function saveProxy(){
+  const p = document.getElementById('proxyport').value;
+  const s = document.getElementById('proxysecret').value;
+  const r = await api('apply_proxy_config', p, s);
+  if(r && r.ok){
+    document.getElementById('proxysecret').value = r.secret;
+    document.getElementById('proxylink').value = r.link;
+    document.getElementById('proxyport').value = r.port;
+    toast(T('saved_ok') + (r.restarted ? ' • ' + T('proxy_restarted') : ''));
+  } else if(r && r.error === 'port'){ toast(T('proxy_bad_port')); }
+  else if(r && r.error === 'secret'){ toast(T('proxy_bad_secret')); }
+  else { toast(T('save_fail')); }
+}
+async function proxyToggle(){
+  await api('toggle_proxy');
+  setTimeout(openProxy, 500);
+}
+function copyProxyLink(){
+  const el = document.getElementById('proxylink');
+  el.select(); el.setSelectionRange(0, 999);
+  try { document.execCommand('copy'); toast(T('copied')); } catch(e){ console.log(e); }
+}
+async function openLists(){
+  listsCache = await api('get_lists') || {};
+  const pick = document.getElementById('listpick');
+  pick.innerHTML = '';
+  Object.keys(listsCache).forEach(n=>{
+    const o = document.createElement('option'); o.value = n; o.textContent = n; pick.appendChild(o);
+  });
+  pick.onchange = ()=>{ document.getElementById('listtext').value = listsCache[pick.value] || ''; };
+  document.getElementById('listtext').value = listsCache[pick.value] || '';
+  document.getElementById('listsmodal').classList.add('open');
+}
+async function saveList(){
+  const pick = document.getElementById('listpick');
+  const r = await api('save_list', pick.value, document.getElementById('listtext').value);
+  if(r && r.ok){ listsCache[pick.value] = document.getElementById('listtext').value; alert(T('saved_ok')); }
+  else alert(T('save_fail'));
+}
+async function showChangelog(){
+  const cl = await api('get_changelog') || [];
+  const box = document.getElementById('log'); box.innerHTML='';
+  cl.forEach(([ver, lines])=>{
+    const h=document.createElement('div'); h.innerHTML=`<b style="color:var(--accent)">${ver}</b>`;
+    box.appendChild(h);
+    const ul=document.createElement('ul'); ul.style.paddingLeft='16px';
+    lines.forEach(l=>{ const li=document.createElement('li'); li.textContent=l; ul.appendChild(li); });
+    box.appendChild(ul);
+  });
+  document.getElementById('changelog').classList.add('open');
+  document.getElementById('changelog').onclick=e=>{ if(e.target.id==='changelog') closeModals(); };
+}
+function fmt(sec){
+  const h=String(Math.floor(sec/3600)).padStart(2,'0'),
+        m=String(Math.floor(sec%3600/60)).padStart(2,'0'),
+        s=String(sec%60).padStart(2,'0');
+  return `${h}:${m}:${s}`;
+}
+function setTheme(color){ document.documentElement.style.setProperty('--accent', color); }
+
+async function poll(){
+  const s = await api('get_state'); if(!s) return;
+  S = s;
+  const lang = s.settings.lang || 'RU';
+  if(lang !== LANG){
+    LANG = lang;
+    document.documentElement.lang = (lang === 'EN') ? 'en' : 'ru';
+    applyI18n();
+  }
+  document.getElementById('ver').textContent = `v${s.version} • ${T('changelog_hint')}`;
+  document.getElementById('ver').title = (s.package ? ('package: ' + s.package) : '') + (s.backend ? (' | backend: ' + s.backend) : '');
+  document.body.classList.toggle('compact', !!s.compact);
+  const circle=document.getElementById('circle');
+  const action=document.getElementById('action');
+  const timer=document.getElementById('timer');
+  const statusline=document.getElementById('statusline');
+  circle.classList.remove('busy');
+  if(s.status==='ON'){
+    circle.classList.add('on'); action.textContent=T('btn_stop_action'); timer.style.display='';
+    timer.textContent=fmt(s.uptime); statusline.textContent=T('status_on');
+  } else if(s.status==='BUSY'){
+    circle.classList.add('busy'); action.textContent='...'; timer.style.display='none'; statusline.textContent=T('status_busy');
+  } else {
+    circle.classList.remove('on'); action.textContent=T('btn_start'); timer.style.display='none';
+    statusline.textContent = T('status_' + (s.status_key || 'ready'));
+  }
+  if(s.first_run && !window._wizDone){
+    window._wizDone = true;
+    setTimeout(openWizard, 600);
+  }
+  document.getElementById('strat').textContent = s.strategy;
+  document.getElementById('cpu').innerHTML = `CPU <b>${s.hud.CPU}%</b>`;
+  document.getElementById('ram').innerHTML = `RAM <b>${s.hud.RAM}%</b>`;
+  if(!splashDone){
+    if(s.settings.minimal || s.settings.intro === false) hideSplash();
+    else if(!window._splashTimer) window._splashTimer = setTimeout(hideSplash, 2000);
+  }
+  const effQ = s.effective_quality || 'medium';
+  HIST_MAX = effQ === 'low' ? 30 : (effQ === 'high' ? 90 : 60);
+  document.body.classList.toggle('lowq', effQ === 'low');
+  const wantBg = s.settings.snow ? (effQ === 'high' ? 80 : (effQ === 'medium' ? 45 : 24)) : 0;
+  bgOn = wantBg > 0;
+  if(wantBg && bgParticles.length !== wantBg) bgInit(wantBg);
+  pushHist(s.hud.CPU, s.hud.RAM, parseInt(s.hud.PING, 10));
+  document.getElementById('ping').innerHTML = `PING <b>${s.hud.PING}</b>`;
+  const by=document.getElementById('bypass');
+  by.className='hudchip '+(s.hud.BYPASS==='OK'?'ok':s.hud.BYPASS==='FAIL'?'fail':'');
+  by.innerHTML = `BYPASS <b>${s.hud.BYPASS}</b>`;
+  const svc = s.services || {};
+  const svcTotal = Object.keys(svc).length, svcOk = Object.values(svc).filter(v=>v>=0).length;
+  const srvEl = document.getElementById('srv');
+  srvEl.className = 'hudchip '+(svcTotal && svcOk===svcTotal ? 'ok' : svcTotal && svcOk===0 ? 'fail' : '');
+  srvEl.innerHTML = `SRV <b>${svcTotal ? svcOk+'/'+svcTotal : '--'}</b>`;
+  const tb=document.getElementById('testbar');
+  if(s.autotest && s.autotest.running){
+    tb.style.display=''; tb.textContent=T('autotest_line', {i:s.autotest.index, t:s.autotest.total, s:s.autotest.strategy});
+  } else if(s.test && s.test.running){
+    tb.style.display=''; tb.textContent=T('testing_line', {p:s.test.progress, t:s.test.total, line:s.test.line||''});
+  } else tb.style.display='none';
+  const upd=document.getElementById('upd');
+  upd.style.display = s.update_available ? '' : 'none';
+  // settings
+  for(const k of ['autorun','notifications','auto_restart','minimal','snow','minimized','gaming_mode','auto_rotate','discord_rpc','intro']){
+    document.getElementById('t-'+k).classList.toggle('on', !!s.settings[k]);
+  }
+  document.getElementById('t-lang').classList.toggle('on', s.settings.lang==='EN');
+  document.getElementById('t-battery_saver').classList.toggle('on', !!s.settings.battery_saver);
+  document.getElementById('t-theme_mode').classList.toggle('on', s.settings.theme_mode === 'light');
+  document.body.classList.toggle('light', s.settings.theme_mode === 'light');
+  const dinfo = s.discord || {};
+  const dhint = document.getElementById('discordhint');
+  dhint.style.cursor = 'default'; dhint.onclick = null; dhint.style.color = 'var(--muted)';
+  if(!dinfo.enabled){ dhint.textContent = ''; }
+  else if(!dinfo.client_id_set){ dhint.textContent = T('discord_id_needed'); dhint.style.cursor = 'pointer'; dhint.style.color = 'var(--accent)'; dhint.onclick = openDiscordId; }
+  else if(!dinfo.lib_available){ dhint.textContent = T('discord_lib_missing'); }
+  else if(!dinfo.active){ dhint.textContent = T('discord_wait'); }
+  else { dhint.textContent = T('discord_ok'); dhint.style.color = 'var(--accent)'; }
+  const hk = document.getElementById('hotkey');
+  if(document.activeElement !== hk){
+    hk.value = s.settings.hotkey_toggle || 'Ctrl+Shift+Z';
+    hk.onkeydown = async (e)=>{
+      e.preventDefault();
+      if(e.key === 'Escape'){ hk.blur(); return; }
+      const parts = [];
+      if(e.ctrlKey) parts.push('Ctrl');
+      if(e.shiftKey) parts.push('Shift');
+      if(e.altKey) parts.push('Alt');
+      let k = e.key || '';
+      const ruMap = {'я':'Z','с':'C'};
+      k = ruMap[k] || k;
+      if(!['Control','Shift','Alt','Meta'].includes(k)){ parts.push(k.length===1 ? k.toUpperCase() : k); }
+      if(parts.length < 2) return;
+      hk.value = parts.join('+');
+      if(hk.value !== s.settings.hotkey_toggle){ await api('set_setting', 'hotkey_toggle', hk.value); poll(); }
+    };
+  }
+  const idle = document.getElementById('idlemin');
+  if(document.activeElement !== idle){
+    idle.value = s.idle_hide_min || 0;
+    idle.onchange = async ()=>{ await api('set_setting', 'idle_hide_min', idle.value); poll(); };
+  }
+  const q = s.quality || 'auto';
+  for(const name of ['auto','low','medium','high']){
+    document.getElementById('q-'+name).classList.toggle('on', q === name);
+  }
+  const mode = s.settings.ui_mode || 'advanced';
+  document.body.classList.toggle('mode-simple', mode === 'simple');
+  for(const name of ['simple','advanced','expert']){
+    document.getElementById('m-'+name).classList.toggle('on', mode === name);
+  }
+  const ch = s.update_channel || 'stable';
+  document.getElementById('ch-stable').classList.toggle('on', ch === 'stable');
+  document.getElementById('ch-beta').classList.toggle('on', ch === 'beta');
+  document.getElementById('rollbackbtn').style.display = s.rollback_available ? '' : 'none';
+  setTheme(s.settings.theme === 'Custom' && s.settings.theme_custom
+    ? s.settings.theme_custom : (s.themes[s.settings.theme] || '#00ff88'));
+  const ap = document.getElementById('accentpick');
+  if(ap){
+    ap.value = s.settings.theme_custom || '#00ff88';
+    ap.onchange = async ()=>{
+      await api('set_setting', 'theme_custom', ap.value);
+      await api('set_setting', 'theme', 'Custom');
+      poll();
+    };
+  }
+  if(!document.getElementById('themes').childElementCount){
+    Object.entries(s.themes).forEach(([name,col])=>{
+      const d=document.createElement('div'); d.className='dot'; d.style.background=col; d.title=name;
+      d.onclick=async()=>{ await api('set_setting','theme',name); poll(); };
+      document.getElementById('themes').appendChild(d);
+    });
+  }
+  document.querySelectorAll('#themes .dot').forEach((d,i)=>{
+    d.classList.toggle('sel', Object.keys(s.themes)[i]===s.settings.theme);
+  });
+  document.getElementById('favstar').innerHTML = s.favorite===s.strategy ? '&#9733;':'&#9734;';
+}
+window.addEventListener('pywebviewready', ()=>{ poll(); setInterval(poll, 1000); });
+</script>
+</body>
+</html>

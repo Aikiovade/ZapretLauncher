@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zapret-launcher"
+version = "17.4"
+description = "Windows launcher for zapret DPI bypass (ZapretLauncher)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "customtkinter>=5.2",
+    "psutil>=5.9",
+    "pystray>=0.19",
+    "Pillow>=10.0",
+    "keyboard>=0.13.5",
+    "pywebview>=6.0",
+]
+
+[project.scripts]
+zapret-cli = "zapret_cli:main"
+
+[tool.setuptools]
+py-modules = ["zapret_cli", "zapret_new_win", "ed25519", "webapp"]

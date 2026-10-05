@@ -1,8 +1,16 @@
-# Python
 __pycache__/
 *.py[cod]
-
-# PyInstaller build artifacts
 build/
 dist/
+launcher_config.json
+launcher_debug.txt
+*.old
+*.new
+.venv/
+venv/
+.ruff_cache/
+sbom.json
+pip-audit.json
+keys.json
+*.key.json
 *.spec.bak

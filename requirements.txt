@@ -1,0 +1,15 @@
+customtkinter>=5.2
+psutil>=5.9
+pystray>=0.19
+Pillow>=10.0
+keyboard>=0.13.5
+pywebview>=6.0
+pypresence>=4.3   # G12: Discord Rich Presence (опционально; без него приложение работает как раньше)
+
+# Для сборки exe:
+# pyinstaller>=6.0
+
+# Для разработки/CI (не нужны в рантайме):
+# ruff
+# pip-audit
+# cyclonedx-bom

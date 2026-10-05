@@ -1,0 +1,21 @@
+target-version = "py311"
+line-length = 160
+
+[lint]
+select = [
+    "E4",      # imports
+    "E722",    # bare except (точечно; остальной E7-стиль однострочников оставлен как есть)
+    "E9",      # syntax/runtime errors
+    "F",       # pyflakes
+    "W605",    # invalid escape sequences
+    "I001",    # unsorted imports
+    "UP020",   # open() alias
+    "UP031",   # printf-style format
+    "SIM102",  # collapsible if
+    "SIM115",  # open without context manager
+    "PLR1730", # if-stmt min/max
+]
+ignore = [
+    "E402", # imports not at top (WinAPI patches before imports)
+    "E501", # длинные строки — не ограничиваем
+]

@@ -1,57 +1,139 @@
 # Сборка: python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name "Zapret" --icon "icon.ico" --add-data "zapret_data.zip;." --add-data "icon.ico;." zapret.py
 
-import customtkinter as ctk
-import tkinter as tk
+import ctypes
+import hashlib
+import json
+import math
 import os
+import queue
+import random
+import re
+import shutil
+import socket
+import ssl
+import struct
 import subprocess
+import sys
 import threading
 import time
-import math
-import random
-import sys
-import ctypes
-import winsound 
-import struct 
-import traceback 
-import winreg 
-import json
-import urllib.request 
-import urllib.error
+import tkinter as tk
+import traceback
+import urllib.parse
+import urllib.request
+import winsound
 import zipfile
-import shutil
-import re 
-import ssl
-import hashlib 
-import webbrowser 
+from tkinter import simpledialog
+
+import customtkinter as ctk
+import keyboard
 import psutil
 import pystray
 from PIL import Image, ImageDraw
-import keyboard
+
+import discord_rpc
+import ed25519
 
 # ======================================================================
 # 1. КОНФИГУРАЦИЯ И ПУТИ
 # ======================================================================
-CURRENT_VERSION = "17.3"
+CURRENT_VERSION = "17.4"
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/Aikiovade/ZapretLauncher/main/update_info.json"
 
 # --- GLOBAL UI SETTINGS (Critical for fast start) ---
 try:
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("blue")
-except: pass
+except Exception: pass
 # ----------------------------------------------------
 
 DATA_ARCHIVE_NAME = "zapret_data.zip"
-FOLDER_NAME = "zapret-discord-youtube-1.10.0"
+FOLDER_NAME = "zapret-discord-youtube-1.10.3"
 DEFAULT_BAT = "general (ALT).bat"
 CONFIG_FILE_NAME = "launcher_config.json"
 LOG_FILE_NAME = "launcher_debug.txt"
 
-RUSSIAN_ANTHEM_FILE = "yarusskiy.mp3"
-AMERICAN_ANTHEM_FILE = "americanets.mp3"
 TGWS_PROXY_EXE = "TgWsProxy_windows.exe"  # TgWsProxy — запускается из папки zapret
+GAME_FILTER_FILE = "game_filter.enabled"
+USER_LIST_FILES = (
+    "list-general-user.txt",
+    "list-exclude-user.txt",
+    "ipset-exclude-user.txt",
+    "ipset-all-user.txt",
+)
+UPDATE_ALLOWED_HOSTS = ("github.com", "objects.githubusercontent.com", "raw.githubusercontent.com")
+UPDATE_REPO_PATH = "/Aikiovade/ZapretLauncher/"
+DISCORD_CLIENT_ID = "1553946245704192142"  # G12: Client ID приложения Discord (пусто = presence выключен; см. HANDOFF)
+DISCORD_REPO_URL = "https://github.com/Aikiovade/ZapretLauncher"
+INSTALL_DIR_NAME = "ZapretLauncher"          # Program Files\ZapretLauncher (совпадает с .iss)
+INSTALLED_EXE_NAME = "Zapret.exe"            # имя exe в установленной версии (для апдейтера-установщика)
+RENDER_FRAME_MS = 33
+RENDER_HIDDEN_MS = 250
+RENDER_COMPACT_MS = 100
+MAX_UPDATE_BYTES = 200 * 1024 * 1024
+CONFIG_SCHEMA_VERSION = 2
+SOUND_START_FILE = os.path.join("sounds", "start.wav")
+SOUND_STOP_FILE = os.path.join("sounds", "stop.wav")
 
+# CHANGELOG:BEGIN (генерируется tools/sync_changelog.py из CHANGELOG.md — не править вручную)
 CHANGELOG = [
+    ("v17.4", [
+        "+ Запрет обновлён до 1.10.3 (стратегия ALT13, обновлённые списки и утилиты)",
+        "+ TgWsProxy обновлён до v1.10.4",
+        "+ Новый web-интерфейс (WebView2): локализация RU/EN, мини-оверлей, сортировка стратегий по тестам",
+        "+ Менеджер TgProxy: порт, секрет и ссылка для Telegram",
+        "+ Поддержка кастомных портов GameFilter из utils/game_filter.enabled",
+        "+ User-списки и TCP timestamps настраиваются как в оригинальном service.bat",
+        "+ Авто-обновление пакета стратегий Flowseal из настроек",
+        "+ Динамический выбор установленной версии пакета",
+        "+ Редактор пользовательских списков (web UI)",
+        "+ Пробы сервисов (YouTube/Discord/Telegram/Google) и индикатор SRV",
+        "+ Авто-подбор лучшей стратегии по доступности сервисов",
+        "+ Проверка хэша winws.exe (предупреждение о подмене)",
+        "+ Профили сети: стратегия автоматически подбирается по SSID",
+        "+ Диагностика сетевых интерфейсов",
+        "+ Рабочий каталог перенесён в C:\\ZapretLauncher (старые данные мигрируют автоматически)",
+        "+ Новые звуки включения/выключения",
+        "+ Watchdog: SCM-проверка, повторные попытки, понятные уведомления",
+        "+ CLI (zapret-cli) для управления из консоли",
+        "+ Единый CHANGELOG.md как источник «Что нового»",
+        "+ Portable-режим: флаг portable.txt рядом с exe — данные пишутся рядом, а не в C:\\ZapretLauncher",
+        "+ Каналы обновлений stable/beta и кнопка «Откатиться» (резервная копия предыдущего exe)",
+        "+ Авто-качество по железу (low/medium/high) и режим экономии батареи",
+        "+ Светлая тема и настраиваемый хоткей включения/выключения",
+        "+ Гейминг-режим: приоритет winws и пауза проб при полноэкранной игре",
+        "+ Speedtest: замер доступности «до/после» с историей",
+        "+ Авто-скрытие окна при простое",
+        "+ Динамическая иконка трея, меню быстрых стратегий и Windows-уведомления",
+        "+ Подпись манифеста обновлений (Ed25519) и зеркала загрузки",
+        "+ Установщик (Inno Setup) и portable-zip сборка",
+        "+ График пинга в спарклайне (CPU/RAM/PING)",
+        "+ Режимы интерфейса Simple/Advanced/Expert (web)",
+        "+ Dev-режим (--dev) с MockBackend — интерфейс без службы и прав администратора",
+        "+ Теги и метаданные стратегий (<bat>.json), поиск по тегам",
+        "+ Авто-ротация стратегии при деградации доступности",
+        "+ Lite-сборка ZapretLite.exe без встроенного пакета (докачивается при первом старте)",
+        "+ Локальные крашрепорты и их хвост в «Сообщить о проблеме»",
+        "+ Мастер первого запуска и подсказки-тултипы",
+        "+ pre-commit (ruff + smoke + синхронизация CHANGELOG)",
+        "+ Discord Rich Presence: стратегия, состояние, аптайм и кнопка установки (по умолчанию выключено)",
+        "+ Обновление установленной версии через Setup.exe (SSL + sha256 + Ed25519-подпись); portable — self-update",
+        "+ Данные перенесены в %ProgramData%\\ZapretLauncher (DACL Administrators/Users, автомиграция)",
+        "+ Анимация запуска приложения (кольца + логотип; пропуск кликом; отключается в настройках)",
+        "+ Живой фон web-UI: частицы по настройке «Эффекты» (плотность зависит от качества)",
+        "+ Пульсация главного круга при включённом обходе",
+        "+ Установщик: тёмный стиль, брендинг мастера, страница «Что внутри», выбор WebView2/Tk",
+        "+ Discord: Client ID вшивается в сборку (tools/set_discord_id.py) — пользователю вводить ничего не нужно; статус подключения под тумблером",
+        "+ Анимация запуска прокачана: вращающиеся дуги, частицы, glow (2.4 с, пропуск кликом)",
+        "+ Установщик «вау»: фоновая графика мастера, звуковое сопровождение, брендинг приветствия и финала",
+        "* Апдейтер: обязательные SSL и проверка хэша, без bat и TEMP-подмены",
+        "* Безопасность: убраны shell-запуски и SeDebugPrivilege, файлы больше не скрываются",
+        "* Производительность: пауза рендера в трее, 30 FPS, кэш цветов",
+        "* Автозапуск сохраняется в настройках и отключается по-настоящему",
+        "* Единое ядро тестов стратегий; конфиг не теряет настройки между Tk и web",
+        "* Запоминается последнее состояние обхода (ON/OFF)",
+        "* Исправлено: восстановление повреждённого рабочего пакета (стратегии и TgProxy больше не пропадают)",
+        "* Исправлены: кнопка «Экспорт», счётчик аптайма, гонка распаковки архива",
+    ]),
     ("v17.3", [
         "+ Кнопка отключения уведомлений (только на главном экране)",
         "+ Исправлен автозапуск — теперь через ярлык (работает при переносе .exe)",
@@ -98,6 +180,7 @@ CHANGELOG = [
         "+ Анимация и HUD",
     ]),
 ]
+# CHANGELOG:END
 
 TARGET_PROCESSES = ["winws.exe"]      
 WINDOW_WIDTH = 500
@@ -109,7 +192,144 @@ if getattr(sys, 'frozen', False):
 else:
     EXE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_DATA_DIR = os.path.join(os.environ['LOCALAPPDATA'], 'ZapretLauncher')
+PORTABLE_FLAG_FILE = "portable.txt"
+PORTABLE_DATA_DIR = "ZapretLauncher_data"
+
+
+def _portable_requested():
+    """Portable-режим: файл portable.txt рядом с exe или аргумент --portable."""
+    try:
+        if "--portable" in sys.argv:
+            return True
+        return os.path.exists(os.path.join(EXE_DIR, PORTABLE_FLAG_FILE))
+    except Exception:
+        return False
+
+
+def _portable_dir():
+    return os.path.join(EXE_DIR, PORTABLE_DATA_DIR)
+
+
+def _programdata_dir():
+    """E2: общий каталог данных для установленной версии (%ProgramData%\\ZapretLauncher)."""
+    base = os.environ.get('ProgramData') or os.path.join(os.environ.get('SystemDrive', 'C:') + os.sep, 'ProgramData')
+    return os.path.join(base, INSTALL_DIR_NAME)
+
+
+def _dir_writable(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, '.write_probe')
+        with open(probe, 'w') as f:
+            f.write('ok')
+        os.remove(probe)
+        return True
+    except Exception:
+        return False
+
+
+def _pick_data_dir():
+    r"""Рабочий каталог: ZAPRET_DATA_DIR (тесты) → portable → %ProgramData% → C:\ZapretLauncher → %LOCALAPPDATA%."""
+    legacy = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ZapretLauncher')
+    env_dir = (os.environ.get('ZAPRET_DATA_DIR') or '').strip()
+    if env_dir and _dir_writable(env_dir):
+        return env_dir, legacy
+    if _portable_requested():
+        portable = _portable_dir()
+        if _dir_writable(portable):
+            return portable, legacy
+    programdata = _programdata_dir()
+    if _dir_writable(programdata):
+        return programdata, legacy
+    system_drive = os.environ.get('SystemDrive', 'C:')
+    preferred = os.path.join(system_drive + os.sep, 'ZapretLauncher')
+    if _dir_writable(preferred):
+        return preferred, legacy
+    return legacy, preferred
+
+
+def _legacy_data_roots():
+    """E2: старые каталоги данных (кроме активного) — для миграции и очистки."""
+    system_drive = os.environ.get('SystemDrive', 'C:')
+    roots = [
+        os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ZapretLauncher'),
+        os.path.join(system_drive + os.sep, 'ZapretLauncher'),
+    ]
+    result = []
+    for root in roots:
+        try:
+            if os.path.realpath(root) != os.path.realpath(APP_DATA_DIR):
+                result.append(root)
+        except Exception:
+            continue
+    return result
+
+
+def is_portable_mode():
+    """Активен ли portable-режим (данные лежат рядом с exe)."""
+    try:
+        return os.path.realpath(APP_DATA_DIR).startswith(os.path.realpath(EXE_DIR) + os.sep)
+    except Exception:
+        return False
+
+
+def data_dir_mode():
+    """Где лежат данные: 'portable' | 'programdata' | 'legacy'."""
+    try:
+        if is_portable_mode():
+            return "portable"
+        if os.path.realpath(APP_DATA_DIR) == os.path.realpath(_programdata_dir()):
+            return "programdata"
+    except Exception:
+        pass
+    return "legacy"
+
+
+APP_DATA_DIR, LEGACY_DATA_DIR = _pick_data_dir()
+
+
+def payload_complete(zapret_dir):
+    """Полный ли пакет: движок winws + стратегии .bat + TgWsProxy + папка lists."""
+    try:
+        if not zapret_dir or not os.path.isdir(zapret_dir):
+            return False
+        if not os.path.exists(os.path.join(zapret_dir, "bin", "winws.exe")):
+            return False
+        if not os.path.exists(os.path.join(zapret_dir, TGWS_PROXY_EXE)):
+            return False
+        if not os.path.isdir(os.path.join(zapret_dir, "lists")):
+            return False
+        return any(f.endswith(".bat") and "service" not in f.lower()
+                   for f in os.listdir(zapret_dir))
+    except Exception:
+        return False
+
+
+def _find_installed_package_roots():
+    """Все папки zapret-discord-youtube* с winws.exe (новый и старый каталоги)."""
+    roots = []
+    bases = [APP_DATA_DIR, LEGACY_DATA_DIR]
+    for legacy in _legacy_data_roots():
+        if legacy not in bases:
+            bases.append(legacy)
+    for base in bases:
+        for sub in ("", "zapret_data"):
+            folder = os.path.join(base, sub)
+            try:
+                for item in os.listdir(folder):
+                    if item.startswith("zapret-discord-youtube"):
+                        full = os.path.join(folder, item)
+                        if os.path.exists(os.path.join(full, "bin", "winws.exe")):
+                            roots.append(full)
+            except Exception:
+                continue
+    return roots
+
+
+def _package_version_key(path):
+    match = re.search(r'(\d+(?:\.\d+)*)', os.path.basename(path))
+    return tuple(int(x) for x in match.group(1).split('.')) if match else (0,)
+
 
 def locate_zapret_dir():
     candidates = [
@@ -117,21 +337,66 @@ def locate_zapret_dir():
         os.path.join(APP_DATA_DIR, FOLDER_NAME),
         os.path.join(EXE_DIR, "zapret_data", FOLDER_NAME),
         os.path.join(EXE_DIR, FOLDER_NAME),
-        os.path.join(APP_DATA_DIR, "zapret_data"),
-        os.path.join(APP_DATA_DIR)
     ]
     for c in candidates:
-        if os.path.exists(c) and os.path.exists(os.path.join(c, "bin", "winws.exe")):
+        if payload_complete(c):
+            return c
+
+    installed = _find_installed_package_roots()
+    if installed:
+        complete = [p for p in installed if payload_complete(p)]
+        return max(complete or installed, key=_package_version_key)
+
+    for c in (os.path.join(APP_DATA_DIR, "zapret_data"), APP_DATA_DIR):
+        if payload_complete(c):
             return c
     return candidates[0]
 
+
+_payload_lock = threading.Lock()
+
+
+def ensure_payload():
+    """Гарантирует полный пакет в рабочем каталоге: при неполном/старом — распаковка bundled zip."""
+    with _payload_lock:
+        current = locate_zapret_dir()
+        if payload_complete(current) and _package_version_key(current) >= _package_version_key(FOLDER_NAME):
+            return current
+        try:
+            zip_path = resource_path(DATA_ARCHIVE_NAME)
+            if not os.path.exists(zip_path):
+                log_error(f"Архив не найден: {zip_path}; пробую скачать пакет Flowseal (lite-сборка)")
+                ok, message = update_zapret_data()
+                if ok:
+                    log_error(f"Пакет загружен: {message}")
+                    return locate_zapret_dir()
+                log_error(f"update_zapret_data: {message}")
+                return current
+            ensure_app_data()
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                _safe_extractall(zip_ref, APP_DATA_DIR)
+            target = os.path.join(APP_DATA_DIR, FOLDER_NAME)
+            if os.path.isdir(current) and os.path.realpath(current) != os.path.realpath(target):
+                moved = _migrate_user_data(current, target)
+                if moved:
+                    log_error(f"Перенесено пользовательских файлов: {moved}")
+            return locate_zapret_dir()
+        except Exception as e:
+            log_error(f"ensure_payload error: {e}")
+            return current
+
+
 ZAPRET_DIR = locate_zapret_dir()
 
-def get_autorun_exe_path():
-    """Путь к .exe для автозапуска - всегда в папке с данными"""
-    return os.path.join(APP_DATA_DIR, FOLDER_NAME, "Zapret.exe")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, CONFIG_FILE_NAME)
 LOG_PATH = os.path.join(APP_DATA_DIR, LOG_FILE_NAME)
+
+
+def current_exe_path():
+    """Путь к запущенному .exe (или скрипту в dev-режиме)."""
+    if getattr(sys, 'frozen', False):
+        return sys.executable
+    return os.path.abspath(sys.argv[0])
 
 # ----------------------------------
 
@@ -163,7 +428,6 @@ TRANSLATIONS_DATA = {
         "theme": "Тема",
         "status_ready": "ГОТОВ",
         "status_on": "ВКЛ",
-        "status_off": "ВЫКЛ",
         "status_busy": "ЖДИТЕ...",
         "status_error": "ОШИБКА",
         "status_no_file": "НЕТ ФАЙЛА",
@@ -176,9 +440,109 @@ TRANSLATIONS_DATA = {
         "update_failed": "ОШИБКА ОБНОВЛЕНИЯ",
         "update_hash_fail": "ОШИБКА ХЕША",
         "update_latest": "ПОСЛЕДНЯЯ ВЕРСИЯ",
-        "btn_russian": "Я ТОЧНО РУССКИЙ",
-        "btn_american": "FKNG AMERICANETS",
-        "btn_tests": "ЗАПУСК ТЕСТОВ"
+        "btn_tests": "ЗАПУСК ТЕСТОВ",
+        "lang_label": "Язык",
+        "notifications": "Уведомления",
+        "auto_restart_lbl": "Авто-рестарт",
+        "custom_color": "Свой цвет:",
+        "app_sub": "DPI bypass launcher",
+        "gear_title": "Настройки",
+        "spark_title": "CPU (зелёный) и RAM (синий) за последнюю минуту",
+        "btn_strategy": "Стратегия",
+        "btn_stop_action": "СТОП",
+        "btn_update_install": "Установить обновление",
+        "btn_lists": "Списки",
+        "btn_autotest": "Авто-подбор",
+        "btn_probe": "Проверить",
+        "net_profile": "Профиль сети",
+        "btn_changelog": "Что нового",
+        "btn_quit": "Выход",
+        "btn_export": "Экспорт",
+        "btn_import": "Импорт",
+        "btn_update_check": "Обновление",
+        "btn_pkg": "Пакет Flowseal",
+        "btn_save": "Сохранить",
+        "btn_close": "Закрыть",
+        "lists_title": "Пользовательские списки",
+        "search_ph": "Поиск по {n} стратегиям...",
+        "changelog_hint": "что нового?",
+        "status_fail": "СБОЙ",
+        "first_run_toast": "Первый запуск: выбери стратегию или нажми «Авто-подбор» в настройках",
+        "confirm_autotest": "Перебрать все стратегии и выбрать лучшую по доступности сервисов? Обход будет временно перезапускаться.",
+        "autotest_fail": "Не удалось запустить авто-подбор",
+        "autotest_line": "Авто-подбор {i}/{t} — {s}",
+        "testing_line": "Тестирование {p}/{t} — {line}",
+        "ms_suffix": " мс",
+        "pkg_latest": "Установлена последняя версия пакета стратегий",
+        "pkg_check_fail": "Не удалось проверить релизы Flowseal",
+        "pkg_install_q": "Установить пакет стратегий {tag}?",
+        "pkg_installed": "Установлено: {msg}",
+        "pkg_error": "Ошибка: {msg}",
+        "net_remember_q": "Запомнить стратегию «{s}» для сети «{n}»?",
+        "net_saved": "Сохранено для сети: {n}",
+        "net_fail": "Не удалось сохранить",
+        "saved_ok": "Сохранено",
+        "save_fail": "Ошибка сохранения",
+        "update_apply_fail": "Не удалось выполнить обновление",
+        "btn_compact": "Мини-оверлей",
+        "sort_az": "A-Z",
+        "sort_score": "По тестам",
+        "proxy_status": "Статус",
+        "proxy_port": "Порт",
+        "proxy_secret": "Секрет",
+        "proxy_link_lbl": "Ссылка для Telegram",
+        "btn_copy": "Копировать",
+        "btn_start_stop": "Старт/Стоп",
+        "proxy_bad_port": "Неверный порт",
+        "proxy_bad_secret": "Неверный секрет (hex 16-64)",
+        "proxy_restarted": "перезапущен",
+        "copied": "Скопировано",
+        "btn_report": "Сообщить о проблеме",
+        "btn_import_bat": "Импорт .bat",
+        "imported_ok": "Импортировано: {name}",
+        "import_fail": "Не удалось импортировать",
+        "update_channel_lbl": "Канал обновлений",
+        "btn_rollback": "Откатиться",
+        "confirm_rollback": "Вернуться к предыдущей версии? Приложение перезапустится.",
+        "rollback_fail": "Не удалось откатиться",
+        "notify_on": "Обход включён",
+        "notify_off": "Обход выключен",
+        "quality_lbl": "Качество",
+        "quality_auto": "Авто",
+        "quality_low": "Низкое",
+        "quality_medium": "Среднее",
+        "quality_high": "Высокое",
+        "battery_lbl": "Режим батареи",
+        "idle_lbl": "Скрывать при простое (мин)",
+        "light_lbl": "Светлая тема",
+        "hotkey_lbl": "Хоткей вкл/выкл",
+        "gaming_lbl": "Гейминг-режим",
+        "btn_speedtest": "Speedtest",
+        "speedtest_title": "Доступность и задержки",
+        "speedtest_none": "Нет данных",
+        "mode_lbl": "Режим интерфейса",
+        "mode_simple": "Простой",
+        "mode_advanced": "Обычный",
+        "mode_expert": "Эксперт",
+        "auto_rotate_lbl": "Авто-ротация при деградации",
+        "rotate_notify": "Стратегия переключена: {name}",
+        "tip_toggle": "Включить/выключить обход (хоткей)",
+        "tip_update": "Проверить обновления",
+        "tip_strategy": "Выбрать стратегию",
+        "wiz_title": "Первый запуск",
+        "wiz_s1": "Добро пожаловать! Этот лаунчер включает обход блокировок (YouTube, Discord) и ускоряет Telegram.",
+        "wiz_s2": "Выберите стратегию: можно запустить авто-подбор (перебор всех стратегий) или выбрать вручную.",
+        "wiz_s3": "Готово! Нажмите большую кнопку на главном экране, чтобы включить обход.",
+        "wiz_next": "Далее",
+        "wiz_open_strategies": "Выбрать вручную",
+        "discord_rpc_lbl": "Discord статус",
+        "intro_lbl": "Анимация запуска",
+        "discord_id_needed": "Укажите Client ID (нажмите)",
+        "discord_wait": "Ожидание Discord…",
+        "discord_ok": "Подключено к Discord",
+        "discord_lib_missing": "pypresence не установлен",
+        "discord_client_id_title": "Discord Client ID",
+        "discord_client_id_hint": "Создайте приложение на discord.com/developers/applications и вставьте Application ID (17-20 цифр)"
     },
     "EN": {
         "main_title": "ZAPRET",
@@ -192,8 +556,7 @@ TRANSLATIONS_DATA = {
         "start_min": "Start Min",
         "theme": "Theme",
         "status_ready": "READY",
-        "status_on": "ONs",
-        "status_off": "OFF",
+        "status_on": "ON",
         "status_busy": "WAIT...",
         "status_error": "ERROR",
         "status_no_file": "NO FILE",
@@ -206,9 +569,109 @@ TRANSLATIONS_DATA = {
         "update_failed": "UPDATE FAILED",
         "update_hash_fail": "HASH MISMATCH",
         "update_latest": "LATEST VERSION",
-        "btn_russian": "I AM RUSSIAN",
-        "btn_american": "FKNG AMERICANETS",
-        "btn_tests": "RUN TESTS"
+        "btn_tests": "RUN TESTS",
+        "lang_label": "Language",
+        "notifications": "Notifications",
+        "auto_restart_lbl": "Auto-Restart",
+        "custom_color": "Custom color:",
+        "app_sub": "DPI bypass launcher",
+        "gear_title": "Settings",
+        "spark_title": "CPU (green) and RAM (blue) over the last minute",
+        "btn_strategy": "Strategy",
+        "btn_stop_action": "STOP",
+        "btn_update_install": "Install update",
+        "btn_lists": "Lists",
+        "btn_autotest": "Auto-pick",
+        "btn_probe": "Check",
+        "net_profile": "Network profile",
+        "btn_changelog": "What's new",
+        "btn_quit": "Exit",
+        "btn_export": "Export",
+        "btn_import": "Import",
+        "btn_update_check": "Update",
+        "btn_pkg": "Flowseal package",
+        "btn_save": "Save",
+        "btn_close": "Close",
+        "lists_title": "User lists",
+        "search_ph": "Search {n} strategies...",
+        "changelog_hint": "what's new?",
+        "status_fail": "FAILED",
+        "first_run_toast": "First run: pick a strategy or use Auto-pick in settings",
+        "confirm_autotest": "Test all strategies and pick the best by service availability? Bypass will restart temporarily.",
+        "autotest_fail": "Failed to start auto-pick",
+        "autotest_line": "Auto-pick {i}/{t} — {s}",
+        "testing_line": "Testing {p}/{t} — {line}",
+        "ms_suffix": " ms",
+        "pkg_latest": "The strategy package is up to date",
+        "pkg_check_fail": "Failed to check Flowseal releases",
+        "pkg_install_q": "Install strategy package {tag}?",
+        "pkg_installed": "Installed: {msg}",
+        "pkg_error": "Error: {msg}",
+        "net_remember_q": "Remember strategy \"{s}\" for network \"{n}\"?",
+        "net_saved": "Saved for network: {n}",
+        "net_fail": "Failed to save",
+        "saved_ok": "Saved",
+        "save_fail": "Save failed",
+        "update_apply_fail": "Update failed",
+        "btn_compact": "Mini overlay",
+        "sort_az": "A-Z",
+        "sort_score": "By score",
+        "proxy_status": "Status",
+        "proxy_port": "Port",
+        "proxy_secret": "Secret",
+        "proxy_link_lbl": "Telegram link",
+        "btn_copy": "Copy",
+        "btn_start_stop": "Start/Stop",
+        "proxy_bad_port": "Invalid port",
+        "proxy_bad_secret": "Invalid secret (hex 16-64)",
+        "proxy_restarted": "restarted",
+        "copied": "Copied",
+        "btn_report": "Report a problem",
+        "btn_import_bat": "Import .bat",
+        "imported_ok": "Imported: {name}",
+        "import_fail": "Import failed",
+        "update_channel_lbl": "Update channel",
+        "btn_rollback": "Roll back",
+        "confirm_rollback": "Roll back to the previous version? The app will restart.",
+        "rollback_fail": "Rollback failed",
+        "notify_on": "Bypass is ON",
+        "notify_off": "Bypass is OFF",
+        "quality_lbl": "Quality",
+        "quality_auto": "Auto",
+        "quality_low": "Low",
+        "quality_medium": "Medium",
+        "quality_high": "High",
+        "battery_lbl": "Battery saver",
+        "idle_lbl": "Hide when idle (min)",
+        "light_lbl": "Light theme",
+        "hotkey_lbl": "Toggle hotkey",
+        "gaming_lbl": "Gaming mode",
+        "btn_speedtest": "Speedtest",
+        "speedtest_title": "Availability and latency",
+        "speedtest_none": "No data",
+        "mode_lbl": "UI mode",
+        "mode_simple": "Simple",
+        "mode_advanced": "Advanced",
+        "mode_expert": "Expert",
+        "auto_rotate_lbl": "Auto-rotate on degradation",
+        "rotate_notify": "Strategy switched: {name}",
+        "tip_toggle": "Toggle bypass (hotkey)",
+        "tip_update": "Check for updates",
+        "tip_strategy": "Choose a strategy",
+        "wiz_title": "First launch",
+        "wiz_s1": "Welcome! This launcher enables DPI bypass (YouTube, Discord) and speeds up Telegram.",
+        "wiz_s2": "Pick a strategy: run Auto-pick (tests every strategy) or choose manually.",
+        "wiz_s3": "Done! Press the big button on the main screen to enable bypass.",
+        "wiz_next": "Next",
+        "wiz_open_strategies": "Choose manually",
+        "discord_rpc_lbl": "Discord status",
+        "intro_lbl": "Startup animation",
+        "discord_id_needed": "Set Client ID (click)",
+        "discord_wait": "Waiting for Discord…",
+        "discord_ok": "Connected to Discord",
+        "discord_lib_missing": "pypresence is not installed",
+        "discord_client_id_title": "Discord Client ID",
+        "discord_client_id_hint": "Create an app at discord.com/developers/applications and paste its Application ID (17-20 digits)"
     }
 }
 
@@ -216,29 +679,81 @@ TRANSLATIONS_DATA = {
 # 2. СИСТЕМНЫЕ ФУНКЦИИ
 # ======================================================================
 
+def _legacy_zapret_dirs():
+    """Папки старых версий пакета zapret во всех каталогах данных (активный + legacy)."""
+    roots = [APP_DATA_DIR, os.path.join(APP_DATA_DIR, "zapret_data")]
+    for legacy in _legacy_data_roots():
+        roots.extend([legacy, os.path.join(legacy, "zapret_data")])
+    for root in roots:
+        try:
+            for item in os.listdir(root):
+                path = os.path.join(root, item)
+                if os.path.isdir(path) and item.startswith("zapret-discord-youtube") and item != FOLDER_NAME:
+                    yield path
+        except Exception:
+            continue
+
+
+def _migrate_user_data(old_dir, new_dir):
+    """Переносит пользовательские файлы из старой папки версии в текущую."""
+    ok = 0
+    try:
+        candidates = [os.path.join("lists", name) for name in USER_LIST_FILES]
+        candidates.append(os.path.join("utils", GAME_FILTER_FILE))
+        for rel in candidates:
+            src_path = os.path.join(old_dir, rel)
+            dst_path = os.path.join(new_dir, rel)
+            if not os.path.exists(src_path) or os.path.exists(dst_path):
+                continue
+            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+            ok += 1
+        try:
+            src_ipset = os.path.join(old_dir, "lists", "ipset-all.txt")
+            dst_ipset = os.path.join(new_dir, "lists", "ipset-all.txt")
+            if os.path.exists(src_ipset) and os.path.getsize(src_ipset) > os.path.getsize(dst_ipset) + 200:
+                shutil.copy2(src_ipset, dst_ipset)
+                ok += 1
+        except Exception:
+            pass
+    except Exception as e:
+        log_error(f"User data migration error: {e}")
+    return ok
+
+
 def cleanup_old_zapret_folders():
     try:
         ensure_app_data()
-        # Перебираем всё, что лежит в папке AppData\Local\ZapretLauncher
-        for item in os.listdir(APP_DATA_DIR):
-            item_path = os.path.join(APP_DATA_DIR, item)
-            
-            # Проверяем, что это папка, и что ее имя начинается с нужного префикса, 
-            # но при этом она НЕ является нашей текущей рабочей папкой
-            if os.path.isdir(item_path) and item.startswith("zapret-discord-youtube") and item != FOLDER_NAME:
-                try:
-                    # Снимаем атрибуты скрытости/системности, чтобы можно было удалить
-                    ctypes.windll.kernel32.SetFileAttributesW(item_path, 128)
-                    shutil.rmtree(item_path, ignore_errors=True)
-                    log_error(f"Удалена старая папка версии: {item}")
-                except Exception as e:
-                    log_error(f"Не удалось удалить старую папку {item}: {e}")
+        keep_dir = os.path.realpath(locate_zapret_dir()).lower()
+        if not payload_complete(keep_dir):
+            log_error("Пропущена очистка старых папок: активный пакет неполный")
+            return
+        running_exe = os.path.realpath(current_exe_path()).lower()
+        for item_path in list(_legacy_zapret_dirs()):
+            try:
+                folder_real = os.path.realpath(item_path).lower()
+                if folder_real == keep_dir:
+                    continue
+                if running_exe.startswith(folder_real + os.sep):
+                    log_error(f"Пропущена очистка {os.path.basename(item_path)}: из неё запущен текущий exe")
+                    continue
+                ctypes.windll.kernel32.SetFileAttributesW(item_path, 128)
+                if os.path.isdir(keep_dir):
+                    moved = _migrate_user_data(item_path, keep_dir)
+                    if moved:
+                        log_error(f"Перенесено пользовательских файлов: {moved} из {os.path.basename(item_path)}")
+                shutil.rmtree(item_path, ignore_errors=True)
+                log_error(f"Удалена старая папка версии: {os.path.basename(item_path)}")
+            except Exception as e:
+                log_error(f"Не удалось удалить старую папку {item_path}: {e}")
     except Exception as e:
         log_error(f"Ошибка при очистке старых папок: {e}")
 
+
+
 def is_admin():
     try: return ctypes.windll.shell32.IsUserAnAdmin()
-    except: return False
+    except Exception: return False
 
 def resource_path(relative_path):
     try:
@@ -247,31 +762,112 @@ def resource_path(relative_path):
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
-def make_hidden(path):
-    try:
-        if not os.path.exists(path): return
-        FILE_ATTRIBUTE_HIDDEN = 0x02
-        current_attrs = ctypes.windll.kernel32.GetFileAttributesW(path)
-        if current_attrs != -1:
-            if not (current_attrs & FILE_ATTRIBUTE_HIDDEN):
-                ctypes.windll.kernel32.SetFileAttributesW(path, current_attrs | FILE_ATTRIBUTE_HIDDEN)
-    except Exception: pass
-
 def ensure_app_data():
     try:
         if not os.path.exists(APP_DATA_DIR):
             os.makedirs(APP_DATA_DIR)
-        make_hidden(APP_DATA_DIR)
-    except: pass
+    except Exception: pass
+
+
+def ensure_data_dir_acl(path=None):
+    """E2: DACL на каталог данных — Administrators: Full, Users: Read (icacls, best-effort)."""
+    try:
+        target = path or APP_DATA_DIR
+        if not os.path.isdir(target):
+            os.makedirs(target, exist_ok=True)
+        if not is_admin():
+            return False
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        res = subprocess.call(
+            ["icacls", target,
+             "/grant", "*S-1-5-32-544:(OI)(CI)F",   # Administrators: Full
+             "/grant", "*S-1-5-32-545:(OI)(CI)R",   # Users: Read
+             "/T", "/C", "/Q"],
+            startupinfo=si, creationflags=0x08000000)
+        return res == 0
+    except Exception as e:
+        log_error(f"ensure_data_dir_acl error: {e}")
+        return False
+
+LOG_MAX_BYTES = 2 * 1024 * 1024
+EVENTS_PATH = os.path.join(APP_DATA_DIR, "events.jsonl")
+
+
+def _rotate_log_file(path, max_bytes=LOG_MAX_BYTES, keep=1):
+    """Ротация по размеру: path -> path.1 (при переполнении). Возвращает True, если ротировали."""
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < max_bytes:
+            return False
+        for idx in range(keep, 0, -1):
+            src = path if idx == 1 else f"{path}.{idx - 1}"
+            dst = f"{path}.{idx}"
+            if os.path.exists(dst):
+                os.remove(dst)
+            if os.path.exists(src):
+                os.replace(src, dst)
+        return True
+    except Exception:
+        return False
+
 
 def log_error(msg):
     try:
         ensure_app_data()
+        _rotate_log_file(LOG_PATH)
         with open(LOG_PATH, 'a', encoding='utf-8') as f:
-            # Теперь пишем полный формат: Год-Месяц-День Часы:Минуты:Секунды
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-        make_hidden(LOG_PATH)
-    except: pass
+    except Exception: pass
+
+
+def log_event(name, **fields):
+    """Структурированное событие (JSON Lines) для диагностики: events.jsonl с ротацией."""
+    try:
+        ensure_app_data()
+        _rotate_log_file(EVENTS_PATH)
+        record = {"ts": time.strftime('%Y-%m-%d %H:%M:%S'), "event": name}
+        record.update(fields)
+        with open(EVENTS_PATH, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception: pass
+
+
+def build_issue_url(version, strategy=None, os_info=None, log_tail=None):
+    """G10: ссылка на новый issue с предзаполненным телом (без имени пользователя)."""
+    try:
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+        tail = (log_tail or "").strip()
+        if user:
+            tail = tail.replace(user, "<user>")
+
+        def _clean(text):
+            return (text or "").replace("```", "'''")[:6000]
+
+        body = [
+            "### Описание проблемы",
+            "",
+            "<!-- что произошло -->",
+            "",
+            "### Окружение",
+            f"- ZapretLauncher: v{version}",
+            f"- ОС: {os_info or ''}",
+            f"- Стратегия: {strategy or '—'}",
+            "",
+            "### Последние строки лога",
+            "```",
+            _clean(tail),
+            "```",
+        ]
+        params = urllib.parse.urlencode({
+            "title": f"[bug] v{version}: ",
+            "body": "\n".join(body),
+            "labels": "bug",
+        })
+        return f"https://github.com/{UPDATE_REPO_PATH.strip('/')}/issues/new?{params}"
+    except Exception as e:
+        log_error(f"build_issue_url error: {e}")
+        return ""
 
 def cleanup_old_logs():
     try:
@@ -296,18 +892,16 @@ def cleanup_old_logs():
                     log_time = time.mktime(time.strptime(match.group(1), '%Y-%m-%d %H:%M:%S'))
                     # Включаем флаг сохранения, если лог свежее 3 дней
                     keep_current_block = (current_time - log_time <= three_days_sec)
-                except:
+                except Exception:
                     keep_current_block = False # Если дата кривая — не сохраняем
                     
             # Если флаг включен, мы сохраняем и строку с датой, и все многострочные детали ошибки под ней
             if keep_current_block:
                 valid_lines.append(line)
 
-        ctypes.windll.kernel32.SetFileAttributesW(LOG_PATH, 128)
         with open(LOG_PATH, 'w', encoding='utf-8') as f:
             f.writelines(valid_lines)
-        make_hidden(LOG_PATH)
-    except: pass
+    except Exception: pass
 
 def migrate_old_files():
     try:
@@ -318,97 +912,61 @@ def migrate_old_files():
             try:
                 ctypes.windll.kernel32.SetFileAttributesW(old_folder, 128) 
                 shutil.rmtree(old_folder, ignore_errors=True)
-            except: pass
+            except Exception: pass
         if os.path.exists(old_config):
             try: os.remove(old_config)
-            except: pass
+            except Exception: pass
         if os.path.exists(old_log):
             try: os.remove(old_log)
-            except: pass
+            except Exception: pass
     except Exception: pass
 
-def enable_debug_privilege():
-    try:
-        SE_DEBUG_NAME = "SeDebugPrivilege"
-        TOKEN_ADJUST_PRIVILEGES = 0x0020
-        TOKEN_QUERY = 0x0008
-        SE_PRIVILEGE_ENABLED = 0x00000002
-        class LUID(ctypes.Structure):
-            _fields_ = [("LowPart", ctypes.c_ulong), ("HighPart", ctypes.c_long)]
-        class LUID_AND_ATTRIBUTES(ctypes.Structure):
-            _fields_ = [("Luid", LUID), ("Attributes", ctypes.c_ulong)]
-        class TOKEN_PRIVILEGES(ctypes.Structure):
-            _fields_ = [("PrivilegeCount", ctypes.c_ulong), ("Privileges", LUID_AND_ATTRIBUTES * 1)]
-        k32 = ctypes.windll.kernel32
-        advapi32 = ctypes.windll.advapi32
-        token = ctypes.c_void_p()
-        if not advapi32.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ctypes.byref(token)): return False
-        luid = LUID()
-        if not advapi32.LookupPrivilegeValueW(None, SE_DEBUG_NAME, ctypes.byref(luid)):
-            k32.CloseHandle(token); return False
-        tp = TOKEN_PRIVILEGES()
-        tp.PrivilegeCount = 1
-        tp.Privileges[0].Luid = luid
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
-        if not advapi32.AdjustTokenPrivileges(token, False, ctypes.byref(tp), 0, None, None):
-            k32.CloseHandle(token); return False
-        k32.CloseHandle(token)
-        return True
-    except Exception as e:
-        log_error(f"Debug priv error: {e}")
-        return False
-
-def get_exe_path():
-    """Получает путь к .exe файлу (работает и для .py и для frozen .exe)"""
-    if getattr(sys, 'frozen', False):
-        return sys.executable
-    else:
-        return os.path.abspath(sys.argv[0])
 
 def create_shortcut(target_path, shortcut_path, work_dir=None):
-    """Создаёт .lnk ярлык Windows"""
+    """Создаёт .lnk ярлык Windows через WScript.Shell (без pywin32)."""
     try:
-        import pythoncom
-        from win32com.shell import shell
-        
         if work_dir is None:
             work_dir = os.path.dirname(target_path)
-        
-        shortcut = pythoncom.CoCreateInstance(
-            shell.CLSID_ShellLink, None,
-            pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink
+
+        def _ps_quote(value):
+            return "'" + str(value).replace("'", "''") + "'"
+
+        script = (
+            "$ws = New-Object -ComObject WScript.Shell; "
+            f"$lnk = $ws.CreateShortcut({_ps_quote(shortcut_path)}); "
+            f"$lnk.TargetPath = {_ps_quote(target_path)}; "
+            f"$lnk.WorkingDirectory = {_ps_quote(work_dir)}; "
+            "$lnk.Description = 'Zapret Launcher'; "
+            "$lnk.Save()"
         )
-        
-        shortcut.SetPath(target_path)
-        shortcut.SetWorkingDirectory(work_dir)
-        shortcut.SetDescription("Zapret Launcher")
-        shortcut.SetShowCmd(1)  # SW_SHOWNORMAL
-        
-        persist_file = shortcut.QueryInterface(pythoncom.IID_IPersistFile)
-        persist_file.Save(shortcut_path, 0)
-        
-        return True
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        result = subprocess.call(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            startupinfo=si, creationflags=0x08000000
+        )
+        ok = result == 0 and os.path.exists(shortcut_path)
+        if not ok:
+            log_error(f"Shortcut creation failed (exit={result})")
+        return ok
     except Exception as e:
         log_error(f"Shortcut creation error: {e}")
         return False
 
 def set_autorun(enable):
     try:
-        # Папка автозагрузки пользователя
         autostart_folder = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
         shortcut_path = os.path.join(autostart_folder, 'Zapret.lnk')
-        
+
         if enable:
-            # Ярлык ссылается на Zapret.exe в папке с данными (AppData)
-            exe_path = get_autorun_exe_path()
-            
-            # Создаём ярлык
-            create_shortcut(exe_path, shortcut_path)
+            exe_path = current_exe_path()
+            if not create_shortcut(exe_path, shortcut_path):
+                return False
         else:
-            # Удаляем ярлык если есть
             if os.path.exists(shortcut_path):
                 os.remove(shortcut_path)
-        
+
         return True
     except Exception as e:
         log_error(f"Autorun error: {e}")
@@ -419,62 +977,1109 @@ def check_autorun():
         autostart_folder = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
         shortcut_path = os.path.join(autostart_folder, 'Zapret.lnk')
         return os.path.exists(shortcut_path)
-    except: return False
+    except Exception: return False
 
-def get_ping_ms(host):
+def service_state(service_name):
+    """Состояние службы Windows (RUNNING/STOPPED/...) или UNKNOWN."""
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        cmd = ["ping", "-n", "1", "-w", "1000", host]
-        output = subprocess.check_output(cmd, shell=False, startupinfo=startupinfo, creationflags=0x08000000).decode('cp866', errors='ignore')
-        match = re.search(r"(?:время|time)[=<](\d+)", output.lower())
-        if match: return int(match.group(1))
-        elif "TTL=" in output or "ttl=" in output: return 1 
-        else: return -1 
-    except Exception: return -1
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        result = subprocess.run(["sc", "query", service_name], capture_output=True, text=True,
+                                startupinfo=si, creationflags=0x08000000)
+        text = (result.stdout or "").upper()
+        for state in ("RUNNING", "START_PENDING", "STOP_PENDING", "PAUSED", "STOPPED"):
+            if state in text:
+                return state
+        return "NO_SERVICE"
+    except Exception:
+        return "UNKNOWN"
 
-class MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong), ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong), ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
 
-def get_real_ram_usage():
+def winws_process_running():
     try:
-        stat = MEMORYSTATUSEX()
-        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
-        return str(stat.dwMemoryLoad)
-    except: return "00"
+        return any((p.info.get('name') or '').lower() == "winws.exe" for p in psutil.process_iter(['name']))
+    except Exception:
+        return False
 
-def set_volume_max():
+
+def winws_health_ok():
+    """Служба zapret в состоянии RUNNING/START_PENDING или есть живой процесс winws.exe."""
+    if service_state("zapret") in ("RUNNING", "START_PENDING"):
+        return True
+    return winws_process_running()
+
+
+def detect_foreign_dpi_tools():
+    """Ищет сторонние DPI-утилиты, которые могут конфликтовать с zapret."""
+    found = []
     try:
-        for _ in range(50):
-            ctypes.windll.user32.keybd_event(0xAF, 0, 0, 0)
-            ctypes.windll.user32.keybd_event(0xAF, 0, 2, 0)
-    except: pass
+        for svc_name in ("GoodbyeDPI", "GoodbyeDPI-Turbo"):
+            if service_state(svc_name) in ("RUNNING", "START_PENDING"):
+                found.append(f"служба {svc_name}")
+        for proc in psutil.process_iter(['name']):
+            name = (proc.info.get('name') or '').lower()
+            if name in ("goodbyedpi.exe", "goodbyedpi64.exe"):
+                found.append(f"процесс {proc.info.get('name')}")
+    except Exception as e:
+        log_error(f"detect_foreign_dpi_tools error: {e}")
+    return found
 
-class AudioEngine:
-    @staticmethod
-    def play_mp3_path(file_path):
+
+def migrate_from_legacy_dir():
+    r"""E2: переносит данные из старых каталогов (C:\ZapretLauncher, %LOCALAPPDATA%) в активный."""
+    for legacy in _legacy_data_roots():
         try:
-            if not os.path.exists(file_path): return False
-            alias = f"mp3_anthem_{random.randint(0, 9999)}"
-            ctypes.windll.winmm.mciSendStringW(f'open "{file_path}" type mpegvideo alias {alias}', None, 0, 0)
-            ctypes.windll.winmm.mciSendStringW(f"play {alias}", None, 0, 0)
-            return True
+            if not os.path.isdir(legacy):
+                continue
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+            moved = 0
+            for item in os.listdir(legacy):
+                src_path = os.path.join(legacy, item)
+                dst_path = os.path.join(APP_DATA_DIR, item)
+                if os.path.exists(dst_path):
+                    continue
+                try:
+                    if os.path.isdir(src_path):
+                        ctypes.windll.kernel32.SetFileAttributesW(src_path, 128)
+                    shutil.move(src_path, dst_path)
+                    moved += 1
+                except Exception as e:
+                    log_error(f"Migration error ({item}): {e}")
+            if moved:
+                log_error(f"Перенесено объектов из {legacy}: {moved}")
         except Exception as e:
-            log_error(f"Play MP3 Error: {e}")
+            log_error(f"migrate_from_legacy_dir error ({legacy}): {e}")
+
+
+def tcp_connect_ms(host, port=443, timeout=1.5):
+    """TCP-connect до host:port — проверка по тому же пути, что и DPI-фильтрация."""
+    try:
+        start = time.perf_counter()
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+        return int((time.perf_counter() - start) * 1000)
+    except Exception:
+        return -1
+
+
+def detect_quality_preset():
+    """D3: пресет качества по железу: low / medium / high."""
+    try:
+        cores = psutil.cpu_count(logical=False) or psutil.cpu_count() or 2
+        ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+        if cores <= 2 or ram_gb < 4:
+            return "low"
+        if cores >= 8 and ram_gb >= 16:
+            return "high"
+        return "medium"
+    except Exception:
+        return "medium"
+
+
+def battery_state():
+    """D6: состояние батареи: present/on_battery/percent."""
+    try:
+        bat = psutil.sensors_battery()
+        if bat is None:
+            return {"present": False, "on_battery": False, "percent": None}
+        return {"present": True, "on_battery": not bat.power_plugged, "percent": int(bat.percent)}
+    except Exception:
+        return {"present": False, "on_battery": False, "percent": None}
+
+
+def foreground_process_name():
+    """Имя exe активного окна (для G4)."""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return psutil.Process(pid.value).name()
+    except Exception:
+        return ""
+
+
+def fullscreen_game_active():
+    """G4: активное окно занимает весь экран и это не системный/наш процесс."""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd:
             return False
 
-    @staticmethod
-    def play_mp3(filename):
+        class _Rect(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        rect = _Rect()
+        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+        if width < screen_w or height < screen_h:
+            return False
+        name = foreground_process_name().lower()
+        return name not in ("", "explorer.exe", "zapret.exe", "zapretweb.exe", "python.exe", "powershell.exe")
+    except Exception:
+        return False
+
+
+def seconds_since_last_input():
+    """G14: секунды с последнего ввода пользователя (GetLastInputInfo); 0 при ошибке."""
+    try:
+        class _LastInputInfo(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+        info = _LastInputInfo()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return 0
+        millis = ctypes.windll.kernel32.GetTickCount() - info.dwTime
+        return max(0, int(millis // 1000))
+    except Exception:
+        return 0
+
+
+TGWS_APP_NAME = "TgWsProxy"
+TGWS_PORTABLE_DIR = "TgWsProxy_data"
+TGWS_DEFAULT_PORT = 1443
+TGWS_DEFAULT_HOST = "127.0.0.1"
+
+
+def tgws_config_path(zapret_dir=None):
+    """config.json TgWsProxy: portable рядом с пакетом, иначе %APPDATA%\\TgWsProxy."""
+    try:
+        base = zapret_dir or locate_zapret_dir()
+        portable = os.path.join(base, TGWS_PORTABLE_DIR, "config.json")
+        if os.path.exists(portable):
+            return portable
+    except Exception:
+        pass
+    return os.path.join(os.environ.get("APPDATA", ""), TGWS_APP_NAME, "config.json")
+
+
+def read_proxy_config(zapret_dir=None):
+    """Текущий конфиг TgWsProxy (host/port/secret) с безопасными умолчаниями."""
+    cfg = {"host": TGWS_DEFAULT_HOST, "port": TGWS_DEFAULT_PORT, "secret": ""}
+    try:
+        path = tgws_config_path(zapret_dir)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            for key in ("host", "port", "secret"):
+                if key in data:
+                    cfg[key] = data[key]
+    except Exception as e:
+        log_error(f"read_proxy_config error: {e}")
+    return cfg
+
+
+def write_proxy_config(patch, zapret_dir=None):
+    """Атомарно дописывает поля в config.json TgWsProxy."""
+    try:
+        path = tgws_config_path(zapret_dir)
+        data = {}
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        data.update(patch)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        log_error(f"write_proxy_config error: {e}")
+        return False
+
+
+def proxy_link(cfg):
+    """tg://-ссылка для подключения Telegram к прокси (формат Flowseal: secret=dd<hex>)."""
+    host = (cfg or {}).get("host") or TGWS_DEFAULT_HOST
+    port = (cfg or {}).get("port") or TGWS_DEFAULT_PORT
+    secret = (cfg or {}).get("secret") or ""
+    link_host = host
+    if host == "0.0.0.0":
         try:
-            file_path = resource_path(filename)
-            if not os.path.exists(file_path): return False 
-            alias = f"mp3_{random.randint(0, 9999)}"
-            ctypes.windll.winmm.mciSendStringW(f'open "{file_path}" type mpegvideo alias {alias}', None, 0, 0)
-            ctypes.windll.winmm.mciSendStringW(f"play {alias}", None, 0, 0)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                link_host = s.getsockname()[0]
+        except OSError:
+            link_host = "127.0.0.1"
+    return f"tg://proxy?server={link_host}&port={port}&secret=dd{secret}"
+
+
+def proxy_health_ok(cfg, timeout=1.0):
+    """TCP-проверка, что прокси слушает свой порт."""
+    host = (cfg or {}).get("host") or TGWS_DEFAULT_HOST
+    if host in ("0.0.0.0", ""):
+        host = "127.0.0.1"
+    try:
+        port = int((cfg or {}).get("port") or TGWS_DEFAULT_PORT)
+    except Exception:
+        return False
+    return tcp_connect_ms(host, port, timeout=timeout) >= 0
+
+
+def split_windows_args(cmdline):
+    """Разбор строки аргументов по правилам Windows (CommandLineToArgvW)."""
+    try:
+        argv_func = ctypes.windll.shell32.CommandLineToArgvW
+        argv_func.restype = ctypes.POINTER(ctypes.c_wchar_p)
+        argv_func.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+        argc = ctypes.c_int(0)
+        argv = argv_func("x " + cmdline, ctypes.byref(argc))
+        if not argv:
+            return []
+        try:
+            return [argv[i] for i in range(1, argc.value)]
+        finally:
+            ctypes.windll.kernel32.LocalFree(argv)
+    except Exception as e:
+        log_error(f"split_windows_args error: {e}")
+        return []
+
+
+class BypassBackend:
+    """A5: интерфейс движка обхода (абстракция от winws/Windows)."""
+    name = "base"
+
+    def start(self, zapret_dir, bat_path):
+        raise NotImplementedError
+
+    def stop(self):
+        raise NotImplementedError
+
+    def health_ok(self):
+        raise NotImplementedError
+
+    def process_running(self):
+        raise NotImplementedError
+
+
+class WinwsBackend(BypassBackend):
+    """Боевой backend: служба zapret / прямой winws.exe."""
+    name = "winws"
+
+    def start(self, zapret_dir, bat_path):
+        ok = install_zapret_service(zapret_dir, bat_path)
+        if not ok:
+            ok = launch_winws_direct(zapret_dir, bat_path)
+        return bool(ok)
+
+    def stop(self):
+        stop_services_and_processes()
+        return True
+
+    def health_ok(self):
+        return winws_health_ok()
+
+    def process_running(self):
+        return winws_process_running()
+
+
+class MockBackend(BypassBackend):
+    """H5: dev-режим — интерфейс без служб, процессов и сети."""
+    name = "mock"
+
+    def __init__(self):
+        self._on = False
+
+    def start(self, zapret_dir, bat_path):
+        self._on = True
+        return True
+
+    def stop(self):
+        self._on = False
+        return True
+
+    def health_ok(self):
+        return self._on
+
+    def process_running(self):
+        return self._on
+
+
+def is_dev_mode():
+    """H5: dev-режим (--dev или ZAPRET_DEV=1) — без админа и без реальной службы."""
+    return "--dev" in sys.argv or os.environ.get("ZAPRET_DEV") == "1"
+
+
+def get_backend():
+    return MockBackend() if is_dev_mode() else WinwsBackend()
+
+
+def load_strategy_meta(zapret_dir):
+    """A4/C5: метаданные стратегий: <bat>.json (title/tags/description) + эвристики по имени."""
+    meta = {}
+    try:
+        for name in list_strategies(zapret_dir):
+            info = {"title": name.replace(".bat", ""), "tags": [], "description": ""}
+            path = os.path.join(zapret_dir, name + ".json")
+            if os.path.exists(path):
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    for key in ("title", "tags", "description"):
+                        if key in data:
+                            info[key] = data[key]
+                except Exception as e:
+                    log_error(f"strategy meta {name}: {e}")
+            low = name.lower()
+            derived = []
+            match = re.search(r"alt(\d*)", low)
+            if match:
+                derived.append("ALT" + match.group(1))
+            if "fake" in low:
+                derived.append("FAKE")
+            if "simple" in low:
+                derived.append("SIMPLE")
+            if "exp" in low:
+                derived.append("EXP")
+            if "general" in low:
+                derived.append("GENERAL")
+            if isinstance(info.get("tags"), list):
+                info["tags"] = sorted(set(str(t) for t in info["tags"] + derived))
+            else:
+                info["tags"] = sorted(set(derived))
+            meta[name] = info
+    except Exception as e:
+        log_error(f"load_strategy_meta error: {e}")
+    return meta
+
+
+CRASH_DIR = os.path.join(APP_DATA_DIR, "crashes")
+
+
+def install_crash_handler(app_name="launcher"):
+    """E6: локальные крашрепорты без сети: APP_DATA_DIR/crashes/<ts>_<app>.txt."""
+    def _hook(exc_type, exc_value, exc_tb):
+        try:
+            ensure_app_data()
+            os.makedirs(CRASH_DIR, exist_ok=True)
+            path = os.path.join(CRASH_DIR, time.strftime("%Y%m%d_%H%M%S") + f"_{app_name}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"ZapretLauncher {CURRENT_VERSION} ({app_name})\n")
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n\n")
+                traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+            log_error(f"Crash report saved: {path}")
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _hook
+
+
+def latest_crash_file():
+    """Последний локальный крашрепорт (или "")."""
+    try:
+        if not os.path.isdir(CRASH_DIR):
+            return ""
+        files = sorted(os.path.join(CRASH_DIR, f) for f in os.listdir(CRASH_DIR))
+        return files[-1] if files else ""
+    except Exception:
+        return ""
+
+
+def sha256_of_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def is_trusted_update_url(url):
+    try:
+        parsed = urllib.parse.urlparse(url or "")
+        if parsed.scheme != "https":
+            return False
+        if parsed.hostname not in UPDATE_ALLOWED_HOSTS:
+            return False
+        return parsed.path.startswith(UPDATE_REPO_PATH)
+    except Exception:
+        return False
+
+
+def is_trusted_github_url(url):
+    try:
+        parsed = urllib.parse.urlparse(url or "")
+        if parsed.scheme != "https" or parsed.hostname not in UPDATE_ALLOWED_HOSTS:
+            return False
+        return parsed.path.startswith("/Flowseal/") or parsed.path.startswith("/Aikiovade/")
+    except Exception:
+        return False
+
+
+# --- F2/F5/E1: каналы обновлений, зеркала, подпись манифеста ---
+UPDATE_CHANNELS = {
+    "stable": UPDATE_VERSION_URL,
+    "beta": "https://raw.githubusercontent.com/Aikiovade/ZapretLauncher/main/update_info_beta.json",
+}
+UPDATE_PUBKEY_HEX = ""  # E1: публичный Ed25519-ключ (hex) для проверки подписи манифеста
+DEFAULT_UPDATE_CHANNEL = "stable"
+
+
+def update_manifest_url(channel):
+    """URL манифеста для канала (stable/beta)."""
+    return UPDATE_CHANNELS.get((channel or DEFAULT_UPDATE_CHANNEL).lower(), UPDATE_VERSION_URL)
+
+
+def update_download_candidates(info, key="download_url"):
+    """F5: доверенные URL для скачивания (основной + зеркала из манифеста), по порядку."""
+    urls = []
+    primary = (info or {}).get(key)
+    if primary:
+        urls.append(primary)
+    for url in (info or {}).get("mirrors") or []:
+        if isinstance(url, str):
+            urls.append(url)
+    result = []
+    for url in urls:
+        if is_trusted_update_url(url) and url not in result:
+            result.append(url)
+        elif url:
+            log_error(f"Недоверенное зеркало обновления пропущено: {url}")
+    return result
+
+
+# --- A9/I3/F2: обновление через установщик vs portable self-update ---
+
+def update_mode():
+    """Способ обновления: 'portable' (exe рядом с данными) | 'installed' (Program Files)."""
+    try:
+        if is_portable_mode():
+            return "portable"
+    except Exception:
+        pass
+    return "installed"
+
+
+INSTALL_MODE_FILE = "install_mode.json"
+
+
+def install_mode_path():
+    return os.path.join(APP_DATA_DIR, INSTALL_MODE_FILE)
+
+
+def record_install_mode():
+    """A9/I3: зафиксировать способ установки (exe/компонент) для апдейтера (только frozen)."""
+    try:
+        if not getattr(sys, 'frozen', False):
+            return {}
+        if is_portable_mode():
+            return {}
+        exe_name = os.path.basename(current_exe_path())
+        data = {
+            "mode": update_mode(),
+            "exe": exe_name,
+            "dir": EXE_DIR,
+            "components": "web" if exe_name.lower() == "zapretweb.exe" else "tk",
+        }
+        ensure_app_data()
+        tmp = install_mode_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, install_mode_path())
+        return data
+    except Exception as e:
+        log_error(f"record_install_mode error: {e}")
+        return {}
+
+
+def recorded_install_mode():
+    """Записанный режим установки (install_mode.json) или {}."""
+    try:
+        with open(install_mode_path(), encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def installed_components():
+    """Компонент для silent-апдейта: 'web' | 'tk' (install_mode.json или имя exe)."""
+    recorded = recorded_install_mode().get("components")
+    if recorded in ("web", "tk"):
+        return recorded
+    return "web" if os.path.basename(current_exe_path()).lower() == "zapretweb.exe" else "tk"
+
+
+def installed_exe_path(exe_name=None):
+    """Путь установленного exe (совпадает с DefaultDirName={autopf}\\ZapretLauncher в .iss)."""
+    name = exe_name or recorded_install_mode().get("exe") or INSTALLED_EXE_NAME
+    base = os.environ.get('ProgramFiles') or os.path.join(os.environ.get('SystemDrive', 'C:') + os.sep, 'Program Files')
+    return os.path.join(base, INSTALL_DIR_NAME, name)
+
+
+def installer_update_available(info):
+    """Есть ли в манифесте данные установщика (installer_url + installer_sha256)."""
+    url = str((info or {}).get("installer_url") or "")
+    sha = str((info or {}).get("installer_sha256") or "")
+    return bool(url and sha) and is_trusted_update_url(url)
+
+
+def launch_installer_and_restart(setup_path, components=None):
+    """Запускает Setup.exe /SILENT и после установки — установленный exe (detached cmd).
+
+    components: 'web' | 'tk' — сохранить выбор интерфейса при silent-обновлении.
+    Вызывающий код после успешного запуска должен немедленно завершиться (os._exit).
+    """
+    try:
+        exe = installed_exe_path()
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        cmd = f'start "" /wait "{setup_path}" /SILENT /NORESTART /CLOSEAPPLICATIONS'
+        if components in ("web", "tk"):
+            cmd += f' /COMPONENTS="{components}" /UI={components}'
+        cmd += f' && start "" "{exe}"'
+        subprocess.Popen(["cmd", "/c", cmd], startupinfo=si, creationflags=0x08000000, close_fds=True)
+        return True
+    except Exception as e:
+        log_error(f"launch_installer_and_restart error: {e}")
+        return False
+
+
+def cli_install_service():
+    """Установщик вызывает: поставить службу один раз (если ещё нет). Требует админа."""
+    try:
+        if service_state("zapret") in ("RUNNING", "START_PENDING", "STOPPED", "PAUSED"):
+            log_error("Служба zapret уже установлена — пропускаю --install-service")
             return True
-        except: return False
+        zapret_dir = ensure_payload()
+        name = DEFAULT_BAT
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                name = json.load(f).get("bat") or DEFAULT_BAT
+        except Exception:
+            pass
+        if name not in list_strategies(zapret_dir):
+            strategies = list_strategies(zapret_dir)
+            name = strategies[0] if strategies else ""
+        if not name:
+            log_error("--install-service: нет доступных стратегий")
+            return False
+        ok = install_zapret_service(zapret_dir, os.path.join(zapret_dir, name))
+        log_error(f"--install-service: {'OK' if ok else 'FAIL'} ({name})")
+        return ok
+    except Exception as e:
+        log_error(f"cli_install_service error: {e}")
+        return False
+
+
+def discord_client_id():
+    """G12: Client ID приложения Discord (env override → вшитая константа)."""
+    return (os.environ.get("ZAPRET_DISCORD_CLIENT_ID") or DISCORD_CLIENT_ID or "").strip()
+
+
+def discord_payload(status, strategy, start_time, lang):
+    """G12: payload presence (details/state/start) для текущего состояния."""
+    texts = TRANSLATIONS_DATA.get(lang, TRANSLATIONS_DATA["EN"])
+    if status == "ON":
+        uptime = int(time.time() - start_time) if start_time else 0
+        state = (f"{texts.get('status_on', 'ON')} • "
+                 f"{uptime // 3600:02d}:{(uptime % 3600) // 60:02d}:{uptime % 60:02d}")
+        start = int(start_time) if start_time else None
+    elif status in ("BUSY", "TESTING"):
+        state = texts.get("status_busy", "...")
+        start = None
+    else:
+        state = "OFF"
+        start = None
+    details = f"{texts.get('btn_strategy', 'Strategy')}: {strategy or '—'}"
+    return {"details": details, "state": state, "start": start}
+
+
+def manifest_signing_payload(data):
+    """Канонический payload манифеста для подписи (без поля signature)."""
+    clean = {key: value for key, value in (data or {}).items() if key != "signature"}
+    return json.dumps(clean, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def manifest_signature_ok(data):
+    """E1: проверка подписи манифеста. Пока публичный ключ не задан — проверка пропускается."""
+    signature = ((data or {}).get("signature") or "").strip()
+    if not UPDATE_PUBKEY_HEX:
+        if signature:
+            log_error("Манифест подписан, но публичный ключ не задан — проверка подписи пропущена")
+        return True
+    if not signature:
+        log_error("У манифеста нет подписи, а публичный ключ задан")
+        return False
+    try:
+        return ed25519.verify(UPDATE_PUBKEY_HEX, manifest_signing_payload(data), signature)
+    except Exception as e:
+        log_error(f"manifest_signature_ok error: {e}")
+        return False
+
+
+ZAPRET_RELEASES_API = "https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest"
+
+
+def fetch_zapret_latest_release():
+    """Последний релиз Flowseal zapret-discord-youtube: tag, zip-URL, sha256."""
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(ZAPRET_RELEASES_API,
+                                     headers={"User-Agent": f"ZapretLauncher/{CURRENT_VERSION}"})
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+            data = json.loads(r.read().decode('utf-8'))
+        asset = None
+        for item in data.get("assets", []):
+            if item.get("name", "").endswith(".zip"):
+                asset = item
+                break
+        if not asset:
+            return None
+        digest = asset.get("digest") or ""
+        sha = digest.split(":", 1)[1].lower() if digest.startswith("sha256:") else ""
+        return {"tag": data.get("tag_name", ""), "url": asset["browser_download_url"],
+                "name": asset["name"], "sha256": sha}
+    except Exception as e:
+        log_error(f"fetch_zapret_latest_release error: {e}")
+        return None
+
+
+def update_zapret_data():
+    """Скачивает и распаковывает последний пакет стратегий Flowseal. -> (ok, message)."""
+    rel = fetch_zapret_latest_release()
+    if not rel:
+        return False, "Не удалось получить список релизов Flowseal"
+    if not is_trusted_github_url(rel["url"]):
+        return False, "Недоверенный URL релиза"
+
+    folder_name = rel["name"][:-4] if rel["name"].lower().endswith(".zip") else rel["name"]
+    dest_dir = os.path.join(APP_DATA_DIR, folder_name)
+    if payload_complete(dest_dir):
+        return True, f"Уже установлено: {folder_name}"
+
+    tmp_zip = os.path.join(os.environ.get("TEMP", "."), rel["name"])
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(rel["url"],
+                                     headers={"User-Agent": f"ZapretLauncher/{CURRENT_VERSION}"})
+        with urllib.request.urlopen(req, context=ctx, timeout=120) as resp, open(tmp_zip, 'wb') as out:
+            shutil.copyfileobj(resp, out)
+
+        if rel["sha256"]:
+            actual = sha256_of_file(tmp_zip)
+            if actual.lower() != rel["sha256"]:
+                os.remove(tmp_zip)
+                return False, "Хэш пакета не совпал"
+
+        old_dir = locate_zapret_dir()
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        with zipfile.ZipFile(tmp_zip, 'r') as zip_ref:
+            _safe_extractall(zip_ref, APP_DATA_DIR)
+
+        if not payload_complete(dest_dir):
+            return False, "В архиве нет bin/winws.exe"
+
+        if os.path.isdir(old_dir) and os.path.realpath(old_dir) != os.path.realpath(dest_dir):
+            _migrate_user_data(old_dir, dest_dir)
+
+        try:
+            os.remove(tmp_zip)
+        except Exception:
+            pass
+        return True, folder_name
+    except Exception as e:
+        log_error(f"update_zapret_data error: {e}")
+        return False, str(e)
+
+
+def validate_port_range(value):
+    """Проверяет диапазон портов в формате service.bat (12 или 1024-1934,1936-65535)."""
+    try:
+        clean = re.sub(r'\s+', '', value or '')
+        if not clean:
+            return None
+        for item in clean.split(','):
+            match = re.fullmatch(r'([1-9]\d{0,4})(?:-([1-9]\d{0,4}))?', item)
+            if not match:
+                return None
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) else start
+            if start > 65535 or end > 65535 or start > end:
+                return None
+        return clean
+    except Exception:
+        return None
+
+
+def read_game_filter(zapret_dir):
+    r"""Читает utils\game_filter.enabled. Возвращает (tcp, udp, all)."""
+    try:
+        path = os.path.join(zapret_dir, "utils", GAME_FILTER_FILE)
+        data = {}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    if '=' in line:
+                        key, _, value = line.partition('=')
+                        data[key.strip().lower()] = value.strip()
+        mode = data.get("mode", "disabled").lower()
+        tcp_range = validate_port_range(data.get("tcp", "")) or "12"
+        udp_range = validate_port_range(data.get("udp", "")) or "12"
+        if mode == "all":
+            return tcp_range, udp_range, tcp_range
+        if mode == "tcp":
+            return tcp_range, "12", tcp_range
+        if mode == "udp":
+            return "12", udp_range, udp_range
+    except Exception as e:
+        log_error(f"read_game_filter error: {e}")
+    return "12", "12", "12"
+
+
+def ensure_user_lists(zapret_dir):
+    """Создаёт плейсхолдеры user-списков (аналог service.bat load_user_lists)."""
+    try:
+        lists_dir = os.path.join(zapret_dir, "lists")
+        os.makedirs(lists_dir, exist_ok=True)
+        defaults = {
+            "list-general-user.txt": "# Never leave this file empty\ndomain.example.abc\n",
+            "list-exclude-user.txt": "domain.example.abc\n",
+            "ipset-exclude-user.txt": "203.0.113.113/32\n",
+        }
+        for name, content in defaults.items():
+            path = os.path.join(lists_dir, name)
+            if not os.path.exists(path):
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+    except Exception as e:
+        log_error(f"ensure_user_lists error: {e}")
+
+
+def enable_tcp_timestamps():
+    """Включает TCP timestamps, если они выключены (аналог service.bat :tcp_enable)."""
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        result = subprocess.run(
+            ["netsh", "interface", "tcp", "show", "global"],
+            capture_output=True, text=True,
+            startupinfo=si, creationflags=0x08000000
+        )
+        output = (result.stdout or "").lower()
+        enabled = any("timestamps" in line and "enabled" in line for line in output.splitlines())
+        if not enabled:
+            subprocess.call(
+                ["netsh", "interface", "tcp", "set", "global", "timestamps=enabled"],
+                startupinfo=si, creationflags=0x08000000
+            )
+    except Exception as e:
+        log_error(f"enable_tcp_timestamps error: {e}")
+
+
+def parse_strategy_bat(bat_path, zapret_dir, gf_tcp="12", gf_udp="12", gf_all="12"):
+    """Извлекает и нормализует аргументы winws.exe из .bat стратегии."""
+    try:
+        try:
+            with open(bat_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(bat_path, 'r', encoding='cp1251', errors='replace') as f:
+                content = f.read()
+
+        content = re.sub(r'\^\s*\n', ' ', content)
+        args_str = ""
+        for line in content.split('\n'):
+            if 'winws.exe' in line.lower() and not line.strip().lower().startswith(('rem', '::')):
+                match = re.search(r'winws\.exe["\']?\s+(.*)', line, re.IGNORECASE)
+                if match:
+                    args_str = match.group(1).strip()
+                    break
+
+        if not args_str:
+            return None
+
+        zapret_dir_slash = zapret_dir + "\\"
+        args_str = args_str.replace('%~dp0', zapret_dir_slash)
+        args_str = args_str.replace('%%BIN%%', zapret_dir_slash + "bin\\")
+        args_str = args_str.replace('%BIN%', zapret_dir_slash + "bin\\")
+        args_str = args_str.replace('%%LISTS%%', zapret_dir_slash + "lists\\")
+        args_str = args_str.replace('%LISTS%', zapret_dir_slash + "lists\\")
+        args_str = re.sub(r'%%?GameFilterTCP%%?', gf_tcp, args_str, flags=re.IGNORECASE)
+        args_str = re.sub(r'%%?GameFilterUDP%%?', gf_udp, args_str, flags=re.IGNORECASE)
+        args_str = re.sub(r'%%?GameFilter%%?', gf_all, args_str, flags=re.IGNORECASE)
+        args_str = args_str.replace('^', '')
+        args_str = re.sub(r'\s+', ' ', args_str)
+        return args_str
+    except Exception as e:
+        log_error(f"parse_strategy_bat error: {e}")
+        return None
+
+
+def _safe_extractall(zip_ref, dest_dir):
+    """extractall с защитой от zip-slip и абсолютных путей."""
+    dest_root = os.path.realpath(dest_dir)
+    for member in zip_ref.infolist():
+        name = member.filename.replace('\\', '/')
+        if name.startswith('/') or re.match(r'^[A-Za-z]:', name) or '..' in name.split('/'):
+            log_error(f"Пропущена подозрительная запись архива: {member.filename}")
+            continue
+        target = os.path.realpath(os.path.join(dest_root, name))
+        if target != dest_root and not target.startswith(dest_root + os.sep):
+            log_error(f"Пропущена запись вне каталога: {member.filename}")
+            continue
+        zip_ref.extract(member, dest_root)
+
+
+_tcp_timestamps_done = False
+
+
+def install_zapret_service(zapret_dir, bat_path):
+    """Ставит службу zapret с аргументами из .bat стратегии. Общая логика для всех UI."""
+    global _tcp_timestamps_done
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        cf = 0x08000000
+
+        gf_tcp, gf_udp, gf_all = read_game_filter(zapret_dir)
+        ensure_user_lists(zapret_dir)
+        if not _tcp_timestamps_done:
+            enable_tcp_timestamps()
+            _tcp_timestamps_done = True
+
+        args_str = parse_strategy_bat(bat_path, zapret_dir, gf_tcp, gf_udp, gf_all)
+        if not args_str:
+            log_error(f"Не удалось найти аргументы winws в файле {bat_path}")
+            return False
+
+        bin_path = os.path.join(zapret_dir, 'bin', 'winws.exe')
+        if not os.path.exists(bin_path):
+            log_error(f"winws.exe не найден: {bin_path}")
+            return False
+        check_winws_hash(bin_path)
+
+        subprocess.call(["net", "stop", "zapret"], startupinfo=si, creationflags=cf)
+        subprocess.call(["sc", "delete", "zapret"], startupinfo=si, creationflags=cf)
+        subprocess.call(["taskkill", "/F", "/IM", "winws.exe"], startupinfo=si, creationflags=cf)
+        time.sleep(0.5)
+
+        service_cmd = f'"{bin_path}" {args_str}'
+        subprocess.call(
+            ["sc", "create", "zapret", "binPath=", service_cmd,
+             "DisplayName=", "zapret", "start=", "auto"],
+            startupinfo=si, creationflags=cf
+        )
+        subprocess.call(
+            ["sc", "description", "zapret", "Zapret DPI bypass software"],
+            startupinfo=si, creationflags=cf
+        )
+        subprocess.call(
+            ["sc", "failure", "zapret", "reset=", "86400",
+             "actions=", "restart/5000/restart/10000/restart/30000"],
+            startupinfo=si, creationflags=cf
+        )
+
+        bat_name = os.path.basename(bat_path).replace(".bat", "")
+        subprocess.call(
+            ["reg", "add", r"HKLM\System\CurrentControlSet\Services\zapret",
+             "/v", "zapret-discord-youtube", "/t", "REG_SZ", "/d", bat_name, "/f"],
+            startupinfo=si, creationflags=cf
+        )
+
+        res = subprocess.call(["sc", "start", "zapret"], startupinfo=si, creationflags=cf)
+        time.sleep(0.5)
+        return res == 0 or winws_process_running()
+    except Exception as e:
+        log_error(f"Ошибка установки службы: {e}")
+        return False
+
+
+def launch_winws_direct(zapret_dir, bat_path):
+    """Прямой запуск winws.exe процессом (фолбэк, если служба не ставится)."""
+    try:
+        gf_tcp, gf_udp, gf_all = read_game_filter(zapret_dir)
+        args_str = parse_strategy_bat(bat_path, zapret_dir, gf_tcp, gf_udp, gf_all)
+        if not args_str:
+            return False
+
+        bin_path = os.path.join(zapret_dir, 'bin', 'winws.exe')
+        if not os.path.exists(bin_path):
+            return False
+
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        subprocess.call(["taskkill", "/F", "/IM", "winws.exe"], startupinfo=si, creationflags=0x08000000)
+        time.sleep(0.3)
+
+        argv = [bin_path] + split_windows_args(args_str)
+        subprocess.Popen(argv, cwd=zapret_dir, startupinfo=si,
+                         creationflags=0x08000000, close_fds=True)
+        time.sleep(0.8)
+        return winws_process_running()
+    except Exception as e:
+        log_error(f"launch_winws_direct error: {e}")
+        return False
+
+
+def stop_services_and_processes():
+    """Останавливает службу zapret, WinDivert и процессы winws."""
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = subprocess.SW_HIDE
+    cf = 0x08000000
+
+    subprocess.call(["net", "stop", "zapret"], startupinfo=si, creationflags=cf)
+    subprocess.call(["sc", "delete", "zapret"], startupinfo=si, creationflags=cf)
+    subprocess.call(["net", "stop", "WinDivert"], startupinfo=si, creationflags=cf)
+    subprocess.call(["sc", "delete", "WinDivert"], startupinfo=si, creationflags=cf)
+    subprocess.call(["net", "stop", "WinDivert14"], startupinfo=si, creationflags=cf)
+    subprocess.call(["sc", "delete", "WinDivert14"], startupinfo=si, creationflags=cf)
+    for target in TARGET_PROCESSES:
+        subprocess.call(["taskkill", "/F", "/IM", target], startupinfo=si, creationflags=cf)
+
+
+def list_strategies(zapret_dir):
+    """Список .bat-стратегий в каталоге данных."""
+    try:
+        if zapret_dir and os.path.isdir(zapret_dir):
+            return sorted(f for f in os.listdir(zapret_dir)
+                          if f.endswith('.bat') and 'service' not in f.lower())
+    except Exception as e:
+        log_error(f"list_strategies error: {e}")
+    return []
+
+
+def run_strategy_tests(zapret_dir, on_line=None, should_continue=None):
+    """Общий PS-раннер тестов стратегий: возвращает имя лучшей .bat или None.
+
+    on_line(clean_line) вызывается по мере вывода; should_continue() может
+    прервать обход (для отмены из UI).
+    """
+    ps1_path = os.path.join(zapret_dir, "utils", "test zapret.ps1")
+    if not os.path.exists(ps1_path):
+        log_error(f"Test script not found: {ps1_path}")
+        return None
+    process = None
+    best = None
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        env = dict(os.environ, NO_UPDATE_CHECK="1")
+        process = subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1_path],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            startupinfo=si, creationflags=0x08000000, text=True,
+            encoding='cp866', errors='replace', env=env)
+        process.stdin.write("1\n1\n")
+        process.stdin.flush()
+        for line in iter(process.stdout.readline, ''):
+            if should_continue is not None and not should_continue():
+                break
+            line = re.sub(r'\x1b\[[0-9;]*m', '', line.strip())
+            if not line:
+                continue
+            if on_line is not None:
+                on_line(line)
+            if "Best config:" in line and best is None:
+                name = line.split("Best config:")[-1].strip()
+                for f in list_strategies(zapret_dir):
+                    if f.lower() == name.lower() or name.replace(".bat", "").lower() in f.lower():
+                        best = f
+                        break
+                process.terminate()
+                break
+    except Exception as e:
+        log_error(f"run_strategy_tests error: {e}")
+    finally:
+        if process:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+    return best
+
+
+KNOWN_WINWS_SHA256 = {
+    "affb4f69d2ea302a7abccd5325d81826e140ddae014f1e070bc4a6c0dd555188",
+}
+
+
+def check_winws_hash(bin_path):
+    """Сверяет winws.exe с известными хэшами. Не блокирует, только предупреждает."""
+    try:
+        actual = sha256_of_file(bin_path)
+        if actual in KNOWN_WINWS_SHA256:
+            return True
+        log_error(f"winws.exe хэш неизвестен: {actual} — возможно, обновлённая или подменённая версия")
+        return False
+    except Exception as e:
+        log_error(f"check_winws_hash error: {e}")
+        return False
+
+
+def list_active_interfaces():
+    """Список активных сетевых интерфейсов (для диагностики мультиадаптеров)."""
+    try:
+        stats = psutil.net_if_stats()
+        return sorted(name for name, st in stats.items() if st.isup and name != "Loopback Pseudo-Interface 1")
+    except Exception:
+        return []
+
+
+def get_current_network():
+    """Текущая сеть: SSID для Wi-Fi или 'ethernet'. -> {ssid, network_key}."""
+    ssid = ""
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        result = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True,
+                                text=True, startupinfo=si, creationflags=0x08000000,
+                                encoding="cp866", errors="replace")
+        for line in (result.stdout or "").splitlines():
+            if "SSID" in line and "BSSID" not in line and ":" in line:
+                value = line.split(":", 1)[1].strip()
+                if value:
+                    ssid = value
+                    break
+    except Exception:
+        pass
+    if ssid:
+        return {"ssid": ssid, "network_key": ssid}
+    return {"ssid": "", "network_key": "ethernet"}
+
+
+SERVICE_PROBES = (
+    ("YouTube", "www.youtube.com", 443),
+    ("Discord", "discord.com", 443),
+    ("Telegram", "telegram.org", 443),
+    ("Google", "www.google.com", 443),
+)
+
+
+def probe_services(timeout=2.0):
+    """TCP-пробы доступности сервисов. Возвращает {name: ms|-1}."""
+    results = {}
+    for name, host, port in SERVICE_PROBES:
+        results[name] = tcp_connect_ms(host, port, timeout=timeout)
+    return results
+
+
+def score_probe_results(results):
+    """Доля доступных сервисов (0..1)."""
+    try:
+        if not results:
+            return 0.0
+        return sum(1 for v in results.values() if v >= 0) / len(results)
+    except Exception:
+        return 0.0
+
+
+class AudioEngine:
 
     @staticmethod
     def create_click_sound(freq_start, freq_end, duration_ms=100, volume=0.8):
@@ -565,7 +2170,7 @@ class ZapretLauncher(ctk.CTk):
         try:
             myappid = f'mycompany.zapret.launcher.v{CURRENT_VERSION}'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except: pass
+        except Exception: pass
 
         self.current_lang = "RU" 
         self.translations_data = TRANSLATIONS_DATA
@@ -584,10 +2189,11 @@ class ZapretLauncher(ctk.CTk):
         self.fullscreen = False
         self.bind("<F11>", self.toggle_fullscreen)
         self.bind("<Escape>", self.quit_fullscreen)
+        self.bind("<F12>", lambda _e: self.toggle_profile())
         try:
             self.icon_path = resource_path("icon.ico")
             if os.path.exists(self.icon_path): self.iconbitmap(self.icon_path)
-        except: self.icon_path = None
+        except Exception: self.icon_path = None
         self.canvas = tk.Canvas(self, width=WINDOW_WIDTH, height=WINDOW_HEIGHT, bg="#0a0b1e", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.launcher_status = "OFF"
@@ -599,6 +2205,15 @@ class ZapretLauncher(ctk.CTk):
         self.proxy_status = "OFF"      # TgWsProxy: OFF / ON / BUSY
         self._proxy_process = None     # subprocess.Popen прокси
         self.compact_mode = False      # Мини-оверлей
+        self.idle_hide_min = 0         # G14: авто-скрытие при простое (0 = выключено)
+        self._idle_hidden = False
+        self.intro_enabled = True      # Стартовая анимация (osu-style)
+        self.discord_client_id = ""    # G12: Client ID (если не задан — спросим при включении)
+        self._intro_start = 0.0
+        self._intro_end = 0.0
+        self.discord_rpc = False       # G12: Discord Rich Presence (по умолчанию выключено)
+        self.discord = None            # discord_rpc.DiscordPresence | None
+        self._discord_ts = 0.0         # троттлинг обновлений presence из render_loop
         self._bypass_check = "---"     # Детектор: ---, OK, FAIL
         self.changelog_open = False    # Overlay «Что нового»
         
@@ -607,7 +2222,9 @@ class ZapretLauncher(ctk.CTk):
         
         self.mode_menu_open, self.mode_menu_anim, self.menu_scroll_offset = False, 0.0, 0
         self.snow_enabled, self.minimal_mode, self.start_minimized, self.auto_repair = True, False, False, False
-        self.auto_restart = False      # Авто-перезапуск при падении службы
+        self.autorun_enabled = True
+        self.auto_restart = True       # Авто-перезапуск при падении службы
+        self.desired_bypass = True     # Последнее состояние обхода (ON/OFF)
         self.proxy_enabled = False     # TgWsProxy: включать при старте
         self.notifications_enabled = True  # Уведомления в системном трее
         self.exe_path = None           # Путь к .exe для автозапуска
@@ -618,21 +2235,27 @@ class ZapretLauncher(ctk.CTk):
 
         self.zapret_dir = locate_zapret_dir()
         self._refresh_bat_files()
-        
-        # Копируем .exe в папку с данными (где он должен лежать для автозапуска)
-        self.copy_exe_to_appdata()
-        
-        # Автозапуск всегда ссылается на папку с данными
-        set_autorun(True)
-        
-        threading.Thread(target=self.run_startup_tasks, daemon=True).start()
+
+        self._color_cache = {}
+        self._stats_dirty = False
+        self._stats_last_save = 0.0
+        self._install_lock = threading.Lock()
+        self._ui_queue = queue.Queue()
+        self._tcp_timestamps_done = False
+        self._last_render_error = 0.0
+        self._profile = False
+        self._frame_times = []
+        self._frame_ts = 0.0
+        self._app_cpu = 0.0
+        self._app_cpu_ts = 0.0
+        self._proc = None
+
         
         # --- Переменные прогресса тестирования ---
         self.test_log_line = ""
         self.test_is_running = False 
         self.test_progress = 0
         self.test_total = 1
-        self.seen_configs = set()
         self.auto_start_after_test = False
         self.test_eta = ""
         self._test_config_times = []
@@ -641,32 +2264,38 @@ class ZapretLauncher(ctk.CTk):
         self._test_start_time = 0
         # -----------------------------------------
 
-        self.load_config() 
-        self.update_msg_timer = 0
+        self.load_config()
+        set_autorun(self.autorun_enabled)
+        self.autorun_enabled = check_autorun()
+        self._intro_start = time.time()
+        self._intro_end = (self._intro_start + 2.4) if (self.intro_enabled and not self.minimal_mode) else 0.0
+
         self.update_state = "idle"
         self.remote_version = None
-        
-        self.autorun_enabled = check_autorun()
         self.update_available, self.is_updating = False, False
         self.mouse_x, self.mouse_y = 0, 0
         self.switch_snow_pos = 1.0 if self.snow_enabled else 0.0
         self.switch_style_pos = 1.0 if self.minimal_mode else 0.0
         self.switch_minimized_pos = 1.0 if self.start_minimized else 0.0
-        self.switch_repair_pos = 1.0 if self.auto_repair else 0.0
         self.switch_autorun_pos = 1.0 if self.autorun_enabled else 0.0
         self.switch_autorestart_pos = 1.0 if self.auto_restart else 0.0
         self.switch_proxy_pos = 1.0 if self.proxy_enabled else 0.0
-        self.switch_notifications_pos = 1.0 if self.notifications_enabled else 0.0
+
+        threading.Thread(target=self.run_startup_tasks, daemon=True).start()
+
         try:
-            self.synth_on = AudioEngine.create_click_sound(150, 600, duration_ms=40, volume=0.3)
-            self.synth_off = AudioEngine.create_click_sound(500, 100, duration_ms=60, volume=0.3)
-        except: self.synth_on, self.synth_off = None, None
-        self.warp_particles = [WarpParticle() for _ in range(600)]
+            self.sound_start = self._load_sound_bytes(SOUND_START_FILE)
+            self.sound_stop = self._load_sound_bytes(SOUND_STOP_FILE)
+            self.synth_on = None if self.sound_start else AudioEngine.create_click_sound(150, 600, duration_ms=40, volume=0.3)
+            self.synth_off = None if self.sound_stop else AudioEngine.create_click_sound(500, 100, duration_ms=60, volume=0.3)
+        except Exception:
+            self.sound_start = self.sound_stop = None
+            self.synth_on, self.synth_off = None, None
+        self.warp_particles = [WarpParticle() for _ in range(200)]
         self.snowflakes = [SnowFlake(WINDOW_WIDTH, WINDOW_HEIGHT) for _ in range(90)]
         self.current_warp_speed = 2.5
         self.viz_bars = [random.uniform(0.1, 0.8) for _ in range(8)]
         self.canvas.bind("<Button-1>", self.on_click)
-        self.canvas.bind("<Button-3>", self.on_right_click) 
         self.canvas.bind("<MouseWheel>", self.on_scroll)
         self.canvas.bind("<Motion>", self.on_mouse_move)
 
@@ -692,6 +2321,7 @@ class ZapretLauncher(ctk.CTk):
         self._load_stats()
         self.setup_tray()
         self.setup_hotkeys()
+        self.after(50, self._pump_ui_queue)
 
     def setup_tray(self):
         try:
@@ -699,7 +2329,7 @@ class ZapretLauncher(ctk.CTk):
             try:
                 if self.icon_path and os.path.exists(self.icon_path):
                     icon_img = Image.open(self.icon_path)
-            except: pass
+            except Exception: pass
             if not icon_img:
                 icon_img = Image.new('RGB', (64, 64), color=(10, 11, 30))
                 d = ImageDraw.Draw(icon_img)
@@ -711,6 +2341,8 @@ class ZapretLauncher(ctk.CTk):
                 self.focus_force()
             def on_exit(icon, item):
                 self.tray_icon.stop()
+                try: self._save_stats()
+                except Exception: pass
                 self.stop_process_logic()
                 self.destroy()
                 os._exit(0)
@@ -735,7 +2367,7 @@ class ZapretLauncher(ctk.CTk):
                             title = "Zapret Launcher"
                         if hasattr(self, 'tray_icon') and self.tray_icon:
                             self.tray_icon.title = title
-                    except: pass
+                    except Exception: pass
                     time.sleep(1)
             threading.Thread(target=_update_tray_title, daemon=True).start()
             self.tray_icon = pystray.Icon("ZapretLauncher", icon_img, "Zapret Launcher", menu)
@@ -746,28 +2378,32 @@ class ZapretLauncher(ctk.CTk):
     def setup_hotkeys(self):
         try:
             keyboard.add_hotkey("ctrl+shift+z", lambda: threading.Thread(target=self.toggle_system, daemon=True).start())
+            keyboard.add_hotkey("ctrl+shift+c", lambda: self.ui_call(self.toggle_compact_mode))
         except Exception as e:
             log_error(f"Hotkey setup error: {e}")
 
     def run_startup_tasks(self):
         try:
             ensure_app_data()
-            cleanup_old_logs() 
-            cleanup_old_zapret_folders() # <--- Добавили очистку старых папок Запрета
+            migrate_from_legacy_dir()
+            cleanup_old_logs()
             migrate_old_files()
-            self.cleanup_old_exe() 
-            enable_debug_privilege()
-            self.check_and_install_files() 
-            
-            # При первом запуске копируем .exe в папку с данными для автозапуска
+            self.cleanup_old_exe()
+            self._ensure_payload()
+            cleanup_old_zapret_folders()
+
+            foreign = detect_foreign_dpi_tools()
+            if foreign:
+                log_error(f"Обнаружены другие DPI-инструменты: {', '.join(foreign)}")
+                if self.notifications_enabled:
+                    try: self.tray_icon.notify("Найдены другие DPI-утилиты: " + ", ".join(foreign), "Zapret Launcher")
+                    except Exception: pass
+
+            self.ui_call(self._refresh_bat_files)
             if getattr(self, 'is_first_run', False):
-                self.copy_exe_to_appdata()
-            
-            self.after(0, self._refresh_bat_files) 
-            if getattr(self, 'is_first_run', False):
-                self.after(2000, self.run_service_tests)
-            elif self.autorun_enabled:
-                self.after(2000, self.start_process_logic)
+                self.ui_call(lambda: threading.Thread(target=self.run_service_tests, daemon=True).start())
+            elif self.desired_bypass:
+                self.ui_call(lambda: threading.Thread(target=self.start_process_logic, daemon=True).start())
         except Exception as e:
             log_error(f"Startup Tasks Error: {e}")
 
@@ -778,43 +2414,36 @@ class ZapretLauncher(ctk.CTk):
             bat_path = os.path.join(temp_dir, "updater.bat")
             if os.path.exists(vbs_path):
                 try: os.remove(vbs_path)
-                except: pass
+                except Exception: pass
             if os.path.exists(bat_path):
                 try: os.remove(bat_path)
-                except: pass
+                except Exception: pass
                 
             old_exe = os.path.abspath(sys.executable) + ".old"
             if os.path.exists(old_exe):
                 try: os.remove(old_exe)
-                except: pass
-        except: pass
+                except Exception: pass
+        except Exception: pass
 
-    def copy_exe_to_appdata(self):
-        """Копирует .exe в папку с данными для автозапуска"""
+    def ui_call(self, fn, *args):
+        """Потокобезопасная передача вызова в главный поток (Tk)."""
         try:
-            src_exe = get_autorun_exe_path()
-            dst_exe = get_autorun_exe_path()
-            
-            # Если .exe уже есть в папке с данными, не копируем
-            if os.path.exists(src_exe):
-                return
-            
-            # Определяем текущий путь к .exe
-            if getattr(sys, 'frozen', False):
-                current_exe = sys.executable
-            else:
-                current_exe = os.path.abspath(sys.argv[0])
-            
-            # Копируем в папку с данными
-            dst_dir = os.path.dirname(dst_exe)
-            if not os.path.exists(dst_dir):
-                os.makedirs(dst_dir)
-            
-            shutil.copy2(current_exe, dst_exe)
-            log_error(f"Копировано .exe в папку с данными: {dst_exe}")
+            self._ui_queue.put((fn, args))
         except Exception as e:
-            log_error(f"Ошибка копирования .exe: {e}")
+            log_error(f"ui_call error: {e}")
 
+    def _pump_ui_queue(self):
+        try:
+            while True:
+                fn, args = self._ui_queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception as e:
+                    log_error(f"UI task error: {e}")
+        except queue.Empty:
+            pass
+        finally:
+            self.after(50, self._pump_ui_queue)
 
     def s(self, v): return v * self.ui_scale
     def fs(self, size): return max(8, int(size * self.ui_scale))
@@ -849,68 +2478,83 @@ class ZapretLauncher(ctk.CTk):
             except Exception as e:
                 log_error(f"Sys monitor loop error: {e}")
                 self.hud_values["CPU"] = "0"
-            # Пинг обновляем раз в 5 секунд — не грузим сеть
+            # Пинг обновляем раз в 15 секунд — не грузим сеть
             ping_counter += 1
-            if ping_counter >= 5:
+            if ping_counter >= 15:
                 ping_counter = 0
                 try:
-                    ms = get_ping_ms("8.8.8.8")
+                    ms = tcp_connect_ms("8.8.8.8", 443, timeout=1.0)
                     self.hud_values["PING"] = f"{ms}ms" if ms >= 0 else "---"
-                except:
+                except Exception:
                     self.hud_values["PING"] = "---"
             time.sleep(1)
 
     def watchdog_loop(self):
-        """Следит за тем, жива ли служба winws.exe. Если упала — сбрасывает статус."""
+        """Следит за состоянием службы winws.exe (SCM + процесс)."""
+        fail_streak = 0
+        restart_attempts = 0
+        restart_window_start = 0.0
         while getattr(self, '_watchdog_running', True):
             try:
                 if self.launcher_status == "ON":
-                    alive = any(
-                        p.info['name'].lower() == 'winws.exe'
-                        for p in psutil.process_iter(['name'])
-                        if p.info['name']
-                    )
-                    if not alive:
-                        log_error("Watchdog: winws.exe не найден — служба упала")
-                        if getattr(self, 'auto_restart', False):
-                            log_error("Watchdog: auto-restart включён, перезапускаю службу")
-                            self.launcher_status = "BUSY"
-                            threading.Thread(target=self.start_process_logic, daemon=True).start()
-                        else:
-                            log_error("Watchdog: auto-restart отключён, сбрасываю статус")
-                            self.launcher_status = "OFF"
-                            self.status_text = self.get_text("status_ready")
-                            if self.notifications_enabled:
-                                try: self.tray_icon.notify("Обход упал!", "Zapret Launcher")
-                                except: pass
-                    else:
+                    if winws_health_ok():
+                        fail_streak = 0
                         self._total_uptime_sec += 5
-                        self._save_stats()
+                        self._stats_dirty = True
+                        self._maybe_save_stats()
+                    else:
+                        fail_streak += 1
+                        if fail_streak < 2:
+                            log_error(f"Watchdog: winws.exe не найден (проверка {fail_streak}/2)")
+                        else:
+                            log_error(f"Watchdog: служба упала (SCM={service_state('zapret')})")
+                            if getattr(self, 'auto_restart', False):
+                                now = time.time()
+                                if now - restart_window_start > 300:
+                                    restart_window_start = now
+                                    restart_attempts = 0
+                                if restart_attempts < 3:
+                                    restart_attempts += 1
+                                    log_error(f"Watchdog: auto-restart, попытка {restart_attempts}/3")
+                                    self.launcher_status = "BUSY"
+                                    threading.Thread(target=self.start_process_logic, daemon=True).start()
+                                else:
+                                    log_error("Watchdog: лимит перезапусков исчерпан")
+                                    self.launcher_status = "OFF"
+                                    self.status_text = self.get_text("status_error")
+                                    if self.notifications_enabled:
+                                        try: self.tray_icon.notify("Обход не запускается — проверьте стратегию", "Zapret Launcher")
+                                        except Exception: pass
+                            else:
+                                self.launcher_status = "OFF"
+                                self.status_text = self.get_text("status_ready")
+                                if self.notifications_enabled:
+                                    try: self.tray_icon.notify("Обход упал!", "Zapret Launcher")
+                                    except Exception: pass
+                            fail_streak = 0
                 else:
-                    self._total_uptime_sec += 5
-                    self._save_stats()
-                
-                if self.proxy_status == "ON" and self._proxy_process:
-                    if self._proxy_process.poll() is not None:
-                        log_error("Proxy watchdog: TgWsProxy завершился")
-                        self.proxy_status = "OFF"
-                        self._proxy_process = None
+                    fail_streak = 0
+
+                if self.proxy_status == "ON" and self._proxy_process and self._proxy_process.poll() is not None:
+                    log_error("Proxy watchdog: TgWsProxy завершился")
+                    self.proxy_status = "OFF"
+                    self._proxy_process = None
             except Exception as e:
                 log_error(f"Watchdog error: {e}")
             time.sleep(5)
 
     def bypass_check_loop(self):
-        """Периодически проверяет работает ли обход: пингует discord.com."""
+        """Периодически проверяет работает ли обход: TCP-подключение к discord.com:443."""
         while True:
             try:
                 if self.launcher_status == "ON":
-                    ms = get_ping_ms("discord.com")
+                    ms = tcp_connect_ms("discord.com", 443, timeout=2.0)
                     self._bypass_check = "OK" if ms >= 0 else "FAIL"
                 else:
                     self._bypass_check = "---"
-            except:
+            except Exception:
                 self._bypass_check = "---"
-            time.sleep(30)  # Проверка раз в 30 секунд
+            time.sleep(30)
 
     def _load_stats(self):
         try:
@@ -920,15 +2564,25 @@ class ZapretLauncher(ctk.CTk):
                     d = json.load(f)
                     self._total_uptime_sec = d.get("uptime_sec", 0)
                     self._launch_count = d.get("launches", 0)
-        except: pass
+        except Exception: pass
 
     def _save_stats(self):
         try:
             ensure_app_data()
             stats_path = os.path.join(APP_DATA_DIR, "stats.json")
-            with open(stats_path, 'w', encoding='utf-8') as f:
+            temp_path = stats_path + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump({"uptime_sec": self._total_uptime_sec, "launches": self._launch_count}, f)
-        except: pass
+            os.replace(temp_path, stats_path)
+            self._stats_dirty = False
+        except Exception: pass
+
+    def _maybe_save_stats(self, force=False):
+        now = time.time()
+        if not force and (not self._stats_dirty or now - self._stats_last_save < 60):
+            return
+        self._stats_last_save = now
+        self._save_stats()
 
     # --- TgWsProxy методы ---
     def start_proxy(self):
@@ -937,7 +2591,7 @@ class ZapretLauncher(ctk.CTk):
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = subprocess.SW_HIDE
-            subprocess.call(f'taskkill /F /IM {TGWS_PROXY_EXE}', shell=True, startupinfo=si, creationflags=0x08000000)
+            subprocess.call(["taskkill", "/F", "/IM", TGWS_PROXY_EXE], startupinfo=si, creationflags=0x08000000)
             time.sleep(0.3)
 
             self.zapret_dir = locate_zapret_dir()
@@ -980,7 +2634,7 @@ class ZapretLauncher(ctk.CTk):
             log_error(f"TgWsProxy запущен: {proxy_exe}")
             if self.notifications_enabled:
                 try: self.tray_icon.notify("TgWsProxy включён", "Zapret Launcher")
-                except: pass
+                except Exception: pass
         except Exception as e:
             log_error(f"TgWsProxy start error: {e}")
             self.proxy_status = "OFF"
@@ -993,7 +2647,7 @@ class ZapretLauncher(ctk.CTk):
             # Дополнительно убиваем по имени если запустили внешне
             # Важно: /IM принимает имя без кавычек
             si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = subprocess.SW_HIDE
-            subprocess.call(f'taskkill /F /IM {TGWS_PROXY_EXE}', shell=True, startupinfo=si, creationflags=0x08000000)
+            subprocess.call(["taskkill", "/F", "/IM", TGWS_PROXY_EXE], startupinfo=si, creationflags=0x08000000)
             self.proxy_status = "OFF"
             log_error("TgWsProxy остановлен")
         except Exception as e:
@@ -1038,7 +2692,6 @@ class ZapretLauncher(ctk.CTk):
                 # Проверяем что это валидный конфиг (не посторонний файл)
                 if "snow" in data or "bat" in data or "theme" in data:
                     shutil.copy2(path, CONFIG_PATH)
-                    make_hidden(CONFIG_PATH)
                     self.load_config()
                     self.play_sound("ON")
                     log_error(f"Конфиг импортирован: {path}")
@@ -1046,43 +2699,28 @@ class ZapretLauncher(ctk.CTk):
             log_error(f"Import config error: {e}")
 
     def toggle_compact_mode(self):
-        """Мини-оверлей: маленькое окно поверх всех."""
+        """Мини-оверлей: маленькое окно поверх всех (выход — клик по нему или Ctrl+Shift+C)."""
         self.compact_mode = not self.compact_mode
-        self.play_sound("ON")
+        self.play_sound("ON" if self.compact_mode else "OFF")
         if self.compact_mode:
             self.attributes("-topmost", True)
-            self.geometry("220x50")
             self.resizable(False, False)
+            self.geometry("220x50")
+            self.deiconify()
+            self.lift()
         else:
             self.attributes("-topmost", False)
+            self.resizable(True, True)
             ws = self.winfo_screenwidth()
             self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{(ws - WINDOW_WIDTH)//2}+{(self.winfo_screenheight()-WINDOW_HEIGHT)//2}")
-            self.resizable(True, True)
+            self.deiconify()
+            self.lift()
 
-    def check_and_install_files(self):
-        if not os.path.exists(self.zapret_dir): self.install_files(self.zapret_dir)
-        else: make_hidden(self.zapret_dir)
-
-    def install_files(self, dest_path):
-        def _worker():
-            self.status_text = self.get_text("status_installing")
-            self.launcher_status = "BUSY"
-            try:
-                zip_path = resource_path(DATA_ARCHIVE_NAME)
-                if os.path.exists(zip_path):
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(APP_DATA_DIR)
-                    make_hidden(dest_path)
-                    self.status_text = self.get_text("status_ready")
-                    self.launcher_status = "OFF"
-                    self._refresh_bat_files()
-                else: 
-                    self.status_text = self.get_text("status_no_file")
-                    self.launcher_status = "OFF"
-            except: 
-                self.status_text = self.get_text("status_error")
-                self.launcher_status = "OFF"
-        threading.Thread(target=_worker, daemon=True).start()
+    def _ensure_payload(self):
+        """Гарантирует полный пакет; распаковка bundled zip при неполном/старом (core.ensure_payload)."""
+        self.zapret_dir = ensure_payload()
+        self._refresh_bat_files()
+        return payload_complete(self.zapret_dir)
 
     def get_text(self, key):
         lang_dict = self.translations_data.get(self.current_lang, self.translations_data["EN"])
@@ -1092,76 +2730,126 @@ class ZapretLauncher(ctk.CTk):
         self.is_first_run = not os.path.exists(CONFIG_PATH)
         try:
             if os.path.exists(CONFIG_PATH):
-                with open(CONFIG_PATH, 'r') as f:
+                with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.snow_enabled = data.get("snow", True)
                     self.minimal_mode = data.get("minimal", False)
                     self.start_minimized = data.get("minimized", False)
                     self.auto_repair = data.get("repair", False)
-                    self.auto_restart = data.get("auto_restart", False)
+                    self.auto_restart = data.get("auto_restart", True)
+                    self.desired_bypass = data.get("desired_bypass", True)
                     self.proxy_enabled = data.get("proxy_enabled", False)
                     self.notifications_enabled = data.get("notifications", True)
+                    self.autorun_enabled = data.get("autorun", True)
                     self.theme_name = data.get("theme", DEFAULT_THEME)
                     self.theme_color = self.themes_data.get(self.theme_name, self.themes_data[DEFAULT_THEME])
                     self.selected_bat = data.get("bat", self.bat_files[0] if self.bat_files else DEFAULT_BAT)
                     self.favorite_bat = data.get("fav", None)
                     self.current_lang = data.get("lang", "RU")
-                    self.exe_path = data.get("exe_path", None)
-        except: pass
+                    self.discord_rpc = bool(data.get("discord_rpc", False))
+                    self.intro_enabled = bool(data.get("intro", True))
+                    self.discord_client_id = str(data.get("discord_client_id", "") or "")
+                    try:
+                        self.idle_hide_min = max(0, min(240, int(data.get("idle_hide_min", 0) or 0)))
+                    except Exception:
+                        self.idle_hide_min = 0
+                    if int(data.get("schema_version", 1) or 1) < CONFIG_SCHEMA_VERSION:
+                        self.save_config()
+        except Exception as e:
+            log_error(f"Load config error: {e}")
+        self._apply_discord_setting()
+
+    def _apply_discord_setting(self):
+        """G12: включить/выключить presence по настройке (тихий no-op без client_id/pypresence)."""
+        try:
+            client_id = (self.discord_client_id or discord_client_id()).strip()
+            if self.discord_rpc and discord_rpc.PYPRESENCE_AVAILABLE and client_id:
+                if self.discord is None:
+                    self.discord = discord_rpc.DiscordPresence(client_id)
+                self._update_discord(force=True)
+            elif self.discord is not None:
+                self.discord.close()
+                self.discord = None
+        except Exception:
+            pass
+
+    def _update_discord(self, force=False):
+        try:
+            if self.discord is None:
+                return
+            payload = discord_payload(self.launcher_status, self.selected_bat,
+                                      self.start_time, self.current_lang)
+            self.discord.update(**payload, force=force)
+        except Exception:
+            pass
 
     def save_config(self):
         try:
             ensure_app_data()
+            data = {}
             if os.path.exists(CONFIG_PATH):
-                ctypes.windll.kernel32.SetFileAttributesW(CONFIG_PATH, 128) 
-                
-            with open(CONFIG_PATH, 'w') as f:
-                json.dump({
-                    "snow": self.snow_enabled, 
-                    "minimal": self.minimal_mode, 
-                    "minimized": self.start_minimized, 
-                    "repair": self.auto_repair,
-                    "auto_restart": self.auto_restart,
-                    "proxy_enabled": self.proxy_enabled,
-                    "notifications": self.notifications_enabled,
-                    "theme": self.theme_name, 
-                    "bat": self.selected_bat, 
-                    "fav": self.favorite_bat, 
-                    "lang": self.current_lang,
-                    "exe_path": getattr(self, 'exe_path', None)
-                }, f)
-            make_hidden(CONFIG_PATH) 
+                try:
+                    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            data.update({
+                "schema_version": CONFIG_SCHEMA_VERSION,
+                "snow": self.snow_enabled,
+                "minimal": self.minimal_mode,
+                "minimized": self.start_minimized,
+                "repair": self.auto_repair,
+                "auto_restart": self.auto_restart,
+                "desired_bypass": self.desired_bypass,
+                "proxy_enabled": self.proxy_enabled,
+                "notifications": self.notifications_enabled,
+                "autorun": self.autorun_enabled,
+                "theme": self.theme_name,
+                "bat": self.selected_bat,
+                "fav": self.favorite_bat,
+                "lang": self.current_lang,
+                "idle_hide_min": self.idle_hide_min,
+                "discord_rpc": self.discord_rpc,
+                "intro": self.intro_enabled,
+                "discord_client_id": self.discord_client_id
+            })
+            temp_path = CONFIG_PATH + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, CONFIG_PATH)
         except Exception as e:
             log_error(f"Save config error: {e}")
 
-    def _locate_zapret_dir(self):
-        return locate_zapret_dir()
+    def _load_sound_bytes(self, relative_path):
+        try:
+            path = resource_path(relative_path)
+            if os.path.exists(path):
+                with open(path, 'rb') as f:
+                    return f.read()
+        except Exception as e:
+            log_error(f"Sound load error ({relative_path}): {e}")
+        return None
 
     def play_sound(self, effect_type):
         def _play():
             try:
-                sound = self.synth_on if effect_type == "ON" else self.synth_off
-                if sound: winsound.PlaySound(sound, winsound.SND_MEMORY)
-            except: pass
+                sound = self.sound_start if effect_type == "ON" else self.sound_stop
+                if not sound:
+                    sound = self.synth_on if effect_type == "ON" else self.synth_off
+                if sound:
+                    winsound.PlaySound(sound, winsound.SND_MEMORY)
+            except Exception: pass
         threading.Thread(target=_play, daemon=True).start()
 
-    def play_russian_anthem(self):
-        threading.Thread(target=set_volume_max, daemon=True).start()
-        def _play():
-            if self.zapret_dir and os.path.exists(self.zapret_dir):
-                file_path = os.path.join(self.zapret_dir, RUSSIAN_ANTHEM_FILE)
-                if os.path.exists(file_path): AudioEngine.play_mp3_path(file_path)
-                else: log_error(f"Anthem file not found: {file_path}")
-        threading.Thread(target=_play, daemon=True).start()
-
-    def play_american_anthem(self):
-        threading.Thread(target=set_volume_max, daemon=True).start()
-        def _play():
-            if self.zapret_dir and os.path.exists(self.zapret_dir):
-                file_path = os.path.join(self.zapret_dir, AMERICAN_ANTHEM_FILE)
-                if os.path.exists(file_path): AudioEngine.play_mp3_path(file_path)
-                else: log_error(f"American file not found: {file_path}")
-        threading.Thread(target=_play, daemon=True).start()
+    def toggle_profile(self):
+        self._profile = not self._profile
+        if self._profile:
+            try:
+                self._proc = psutil.Process()
+                self._proc.cpu_percent(None)
+            except Exception:
+                self._proc = None
+        self.play_sound("ON" if self._profile else "OFF")
 
     def run_service_tests(self):
         # Ищем ps1 скрипт в папке utils
@@ -1178,11 +2866,11 @@ class ZapretLauncher(ctk.CTk):
 
         self.play_sound("ON")
         self.launcher_status = "TESTING"
-        self.test_is_running = True 
-        
+        self._update_discord(force=True)
+        self.test_is_running = True
+
         self.test_progress = 0
         self.test_total = len(self.bat_files) if self.bat_files else 1
-        self.seen_configs = set()
         self.auto_start_after_test = False
         self.test_log_line = "Запуск PowerShell..."
         self.test_eta = ""
@@ -1191,124 +2879,61 @@ class ZapretLauncher(ctk.CTk):
         self._test_last_config_time = time.time()
         self._test_start_time = time.time()
 
+        def on_test_line(clean_line):
+            self.test_log_line = clean_line
+
+            progress_match = re.search(r'\[(\d+)/(\d+)\]', clean_line)
+            if progress_match:
+                new_progress = int(progress_match.group(1))
+                new_total = int(progress_match.group(2))
+                self.test_total = new_total
+
+                if new_progress > self._test_last_progress:
+                    now = time.time()
+                    if self._test_last_progress > 0:
+                        self._test_config_times.append(now - self._test_last_config_time)
+                    self._test_last_config_time = now
+                    self._test_last_progress = new_progress
+                    self.test_progress = new_progress
+
+                    if self._test_config_times:
+                        avg_time = sum(self._test_config_times) / len(self._test_config_times)
+                        remaining = (new_total - new_progress) * avg_time
+                        if remaining > 60:
+                            self.test_eta = f"~{int(remaining//60)}м {int(remaining%60)}с"
+                        else:
+                            self.test_eta = f"~{int(remaining)}с"
+
         def background_worker():
-            process = None
+            best_config = run_strategy_tests(
+                self.zapret_dir, on_line=on_test_line,
+                should_continue=lambda: getattr(self, "test_is_running", False))
             try:
-                # Настраиваем скрытый запуск
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = subprocess.SW_HIDE
-
-                cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1_path]
-                
-                # Запускаем процесс, перехватывая ввод и вывод
-                process = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    startupinfo=si,
-                    creationflags=0x08000000,
-                    text=True,
-                    encoding='cp866', # Кодировка консоли Windows по умолчанию
-                    errors='replace'
-                )
-
-                # Программно отвечаем на запросы Read-Host из скрипта
-                # 1 - Standard tests, 1 - All configs
-                process.stdin.write("1\n1\n")
-                process.stdin.flush()
-
-                best_config = None
-
-                # Читаем вывод PowerShell построчно в реальном времени
-                for line in iter(process.stdout.readline, ''):
-                    if not getattr(self, "test_is_running", False):
-                        break # Если нужно прервать тест
-
-                    line = line.strip()
-                    if not line: continue
-
-                    # ---- ДОБАВЬ ВОТ ЭТУ СТРОКУ ДЛЯ ОТЛАДКИ В ТЕРМИНАЛЕ ----
-                    print(f"[PowerShell] {line}")
-                    # -------------------------------------------------------
-
-                    # Убираем возможные ANSI-коды цветов
-                    clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
-                    self.test_log_line = clean_line
-
-                    # Обновляем прогресс по паттерну [X/Y] из вывода PowerShell
-                    progress_match = re.search(r'\[(\d+)/(\d+)\]', clean_line)
-                    if progress_match:
-                        new_progress = int(progress_match.group(1))
-                        new_total = int(progress_match.group(2))
-                        self.test_total = new_total
-                        
-                        if new_progress > self._test_last_progress:
-                            now = time.time()
-                            if self._test_last_progress > 0:
-                                self._test_config_times.append(now - self._test_last_config_time)
-                            self._test_last_config_time = now
-                            self._test_last_progress = new_progress
-                            self.test_progress = new_progress
-                            
-                            # Расчёт ETA
-                            if self._test_config_times:
-                                avg_time = sum(self._test_config_times) / len(self._test_config_times)
-                                remaining = (new_total - new_progress) * avg_time
-                                if remaining > 60:
-                                    self.test_eta = f"~{int(remaining//60)}м {int(remaining%60)}с"
-                                else:
-                                    self.test_eta = f"~{int(remaining)}с"
-
-                    # Отлавливаем результат
-                    if "Best config:" in clean_line and best_config is None:
-                        config_name = clean_line.split("Best config:")[-1].strip()
-                        
-                        matched_file = None
-                        for f in self.bat_files:
-                            if f.lower() == config_name.lower() or config_name.replace(".bat", "").lower() in f.lower():
-                                matched_file = f
-                                break
-                                
-                        if matched_file:
-                            best_config = matched_file
-                            self.selected_bat = best_config
-                            self.favorite_bat = best_config
-                            self.save_config()
-                            self.auto_start_after_test = True
-                            self.after(0, self._refresh_bat_files)
-                            
-                            # Нашли лучший конфиг — убиваем процесс, чтобы не ждать [System.Console]::ReadKey
-                            process.terminate()
-                            break
-
+                if best_config:
+                    self.selected_bat = best_config
+                    self.favorite_bat = best_config
+                    self.save_config()
+                    self.auto_start_after_test = True
+                    self.ui_call(self._refresh_bat_files)
             except Exception as e:
                 log_error(f"Silent test error: {e}")
             finally:
-                # Гарантированное закрытие процесса
-                if process:
-                    try: process.terminate()
-                    except: pass
-                
                 self.test_is_running = False
                 self.launcher_status = "OFF"
                 self.status_text = self.get_text("status_ready")
+                self._update_discord(force=True)
                 self.test_log_line = ""
                 self.test_eta = ""
-                
-                # Сохраняем историю тестов
+
                 duration = time.time() - self._test_start_time
                 self._save_test_history(best_config, duration)
-                
-                # Запускаем найденную стратегию, если нужно
+
                 if getattr(self, 'auto_start_after_test', False):
                     self.auto_start_after_test = False
-                    self.after(1000, self.toggle_system) 
+                    self.ui_call(lambda: threading.Thread(target=self.toggle_system, daemon=True).start())
                 else:
-                    self.after(0, lambda: self.play_sound("ON"))
+                    self.ui_call(self.play_sound, "ON")
 
-        # Запускаем в отдельном потоке, чтобы интерфейс не зависал
         threading.Thread(target=background_worker, daemon=True).start()
 
     def _save_test_history(self, best_config, duration):
@@ -1320,7 +2945,7 @@ class ZapretLauncher(ctk.CTk):
                 try:
                     with open(history_path, 'r', encoding='utf-8') as f:
                         history = json.load(f)
-                except: history = []
+                except Exception: history = []
             
             history.append({
                 "date": time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -1341,14 +2966,25 @@ class ZapretLauncher(ctk.CTk):
     def interpolate_color(self, c1, c2, t):
         try:
             t = max(0.0, min(1.0, float(t)))
+            cache = getattr(self, '_color_cache', None)
+            key = (c1, c2, int(t * 64))
+            if cache is not None:
+                cached = cache.get(key)
+                if cached is not None:
+                    return cached
             def to_rgb(c):
                 if len(c) == 4: c = "#" + "".join([x*2 for x in c[1:]])
                 return tuple(int(c.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
             r1, g1, b1 = to_rgb(c1)
             r2, g2, b2 = to_rgb(c2)
             r, g, b = int(r1+(r2-r1)*t), int(g1+(g2-g1)*t), int(b1+(b2-b1)*t)
-            return '#%02x%02x%02x' % (max(0,min(255,r)), max(0,min(255,g)), max(0,min(255,b)))
-        except: return c1
+            result = f'#{max(0, min(255, r)):02x}{max(0, min(255, g)):02x}{max(0, min(255, b)):02x}'
+            if cache is not None:
+                if len(cache) > 8192:
+                    cache.clear()
+                cache[key] = result
+            return result
+        except Exception: return c1
 
     def rounded_rect(self, x1, y1, x2, y2, r=10, fill_col="", outline_col="", width=1):
         points = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2, x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y2-r, x1, y1+r, x1, y1]
@@ -1383,33 +3019,21 @@ class ZapretLauncher(ctk.CTk):
             return pts
 
     def check_for_updates(self, silent=False):
-        """Checks GitHub for a new version. Robust SSL + timeout handling."""
-        def _try_fetch(url, timeout=8):
-            """Try with SSL, then without if any error."""
-            try:
-                ctx = ssl.create_default_context()
-                with urllib.request.urlopen(url, context=ctx, timeout=timeout) as r:
-                    return r.read()
-            except Exception:
-                pass
-            try:
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                with urllib.request.urlopen(url, context=ctx, timeout=timeout) as r:
-                    return r.read()
-            except Exception as e:
-                raise e
-
+        """Проверяет обновления на GitHub. Проверка SSL обязательна."""
         try:
-            raw = _try_fetch(UPDATE_VERSION_URL)
+            if not is_trusted_update_url(UPDATE_VERSION_URL):
+                raise ValueError(f"Недоверенный URL манифеста: {UPDATE_VERSION_URL}")
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(UPDATE_VERSION_URL, headers={"User-Agent": f"ZapretLauncher/{CURRENT_VERSION}"})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as r:
+                raw = r.read()
             data = json.loads(raw.decode('utf-8'))
             remote_ver = data.get("version", "").strip()
             self.update_data = data
 
             def _ver_tuple(v):
                 try: return tuple(int(x) for x in v.split('.'))
-                except: return (0,)
+                except Exception: return (0,)
 
             if remote_ver and _ver_tuple(remote_ver) > _ver_tuple(CURRENT_VERSION):
                 self.update_available = True
@@ -1417,7 +3041,7 @@ class ZapretLauncher(ctk.CTk):
                 self.update_state = "available"
                 if not silent and self.notifications_enabled:
                     try: self.tray_icon.notify(f"Обновление v{remote_ver}", "Нажмите чтобы установить")
-                    except: pass
+                    except Exception: pass
             else:
                 self.update_available = False
                 self.remote_version = None
@@ -1428,21 +3052,14 @@ class ZapretLauncher(ctk.CTk):
 
     def on_mouse_move(self, event): 
         self.mouse_x, self.mouse_y = event.x, event.y
-        if getattr(self, 'settings_open', False):
-            if event.x > self.canvas.winfo_width() - self.s(280):
-                self.menu_last_active = time.time()
+        if getattr(self, 'settings_open', False) and event.x > self.canvas.winfo_width() - self.s(280):
+            self.menu_last_active = time.time()
 
-    def on_right_click(self, event):
-        s = self.s
-        w = self.canvas.winfo_width()
-        if self.settings_open and event.x > w - s(260) and s(540) <= event.y < s(580):
-            self.play_sound("ON")
 
     def run_logs_console(self):
         if not os.path.exists(LOG_PATH):
              with open(LOG_PATH, 'w', encoding='utf-8') as f:
                  f.write("[LOG START]\nNo previous logs found.\n")
-        make_hidden(LOG_PATH) 
         try:
             os.startfile(LOG_PATH)
             self.play_sound("ON")
@@ -1464,6 +3081,12 @@ class ZapretLauncher(ctk.CTk):
 
     def on_click(self, event):
         self.menu_last_active = time.time() # Любой клик сбрасывает таймер
+        if self._intro_end > time.time():
+            self._intro_end = 0.0
+            return
+        if self.compact_mode:
+            self.toggle_compact_mode()
+            return
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
         s = self.s
         cx, cy = w/2, h/2
@@ -1524,6 +3147,7 @@ class ZapretLauncher(ctk.CTk):
                         old_bat = self.selected_bat
                         self.selected_bat = new_bat
                         self.save_config()
+                        self._update_discord(force=True)
                         self.mode_menu_open = False
                         self.play_sound("ON")
                         if self.launcher_status == "ON" and new_bat != old_bat:
@@ -1537,9 +3161,9 @@ class ZapretLauncher(ctk.CTk):
                         else:
                             val = not getattr(self, attr)
                             setattr(self, attr, val)
-                            if attr == 'autorun_enabled': 
-                                if set_autorun(val): self.switch_autorun_pos = 1.0 if val else 0.0
-                            elif attr == 'notifications_enabled': self.switch_notifications_pos = 1.0 if val else 0.0
+                            if attr == 'autorun_enabled' and set_autorun(val):
+                                self.switch_autorun_pos = 1.0 if val else 0.0
+
                             self.save_config()
                             self.play_sound("ON" if val else "OFF")
                         return True
@@ -1560,13 +3184,6 @@ class ZapretLauncher(ctk.CTk):
                     self.play_sound("ON" if self.auto_restart else "OFF")
                     return
                 
-                # Ряд 5: Уведомления (Y=415..485)
-                if mx+s(20) <= event.x <= mx+s(125) and s(415) <= event.y <= s(485):
-                    self.notifications_enabled = not self.notifications_enabled
-                    self.save_config()
-                    self.play_sound("ON" if self.notifications_enabled else "OFF")
-                    return
-
                 # Экспорт / Импорт конфига (Y=445..470)
                 if mx+s(20) <= event.x <= mx+s(125) and s(445) <= event.y <= s(470):
                     threading.Thread(target=self.export_config, daemon=True).start()
@@ -1592,6 +3209,19 @@ class ZapretLauncher(ctk.CTk):
                         self.run_service_tests()
                     return
 
+                # G12: Discord RPC (Y=676..706)
+                if mx+s(20) <= event.x <= mx+s(240) and s(676) <= event.y <= s(706):
+                    if not self.discord_rpc and not (self.discord_client_id or discord_client_id()):
+                        answer = simpledialog.askstring("Discord RPC", self.get_text("discord_client_id_hint"), parent=self)
+                        if not answer or not answer.strip().isdigit():
+                            return
+                        self.discord_client_id = answer.strip()
+                    self.discord_rpc = not self.discord_rpc
+                    self._apply_discord_setting()
+                    self.save_config()
+                    self.play_sound("ON" if self.discord_rpc else "OFF")
+                    return
+
                 # Звездочка избранного
                 if math.sqrt((event.x-(mx+s(190)))**2+(event.y-s(642))) < s(15):
                      if self.selected_bat:
@@ -1612,31 +3242,20 @@ class ZapretLauncher(ctk.CTk):
                         self.perform_update()
                         self.play_sound("ON")
                     elif not self.update_available:
-                        self.update_msg_text = self.get_text("update_check")
                         threading.Thread(target=self.check_for_updates, args=(False,), daemon=True).start()
                         self.play_sound("ON")
                     return
 
                 # Клик на версию — открыть changelog
-                if mx+s(70) <= event.x <= mx+s(190) and h-s(20) <= event.y <= h-s(2):
-                    if not self.update_available:
-                        self.changelog_open = True
-                        self.play_sound("ON")
-                        return
+                if (mx+s(70) <= event.x <= mx+s(190) and h-s(20) <= event.y <= h-s(2)
+                        and not self.update_available):
+                    self.changelog_open = True
+                    self.play_sound("ON")
+                    return
 
                 return
             self.settings_open = False; return
         
-        # Кнопка СТОП при тестировании
-        if self.launcher_status == "TESTING":
-            stop_y = cy + s(65)
-            if abs(event.x - cx) < s(40) and abs(event.y - stop_y) < s(12):
-                self.test_is_running = False
-                self.play_sound("OFF")
-                return
-        
-        if math.sqrt((event.x-cx)**2 + (event.y-cy)**2) < s(165) and self.launcher_status != "BUSY":
-            threading.Thread(target=self.toggle_system, daemon=True).start()
 
     def toggle_system(self):
         old = self.launcher_status
@@ -1644,6 +3263,7 @@ class ZapretLauncher(ctk.CTk):
         
         self.status_text = self.get_text("status_busy") if old != "BUSY" else "..."
         self.launcher_status = "BUSY"
+        self._update_discord(force=True)
         time.sleep(0.2)
         if old == "ON": self.stop_process_logic()
         else: self.start_process_logic()
@@ -1652,163 +3272,29 @@ class ZapretLauncher(ctk.CTk):
         """Атомарная смена стратегии без ручного стоп/старт — работает пока статус ON."""
         self.launcher_status = "BUSY"
         self.status_text = self.get_text("status_busy")
+        self._update_discord(force=True)
         self.stop_process_logic()
         time.sleep(0.5)
         self.start_process_logic()
 
     def install_zapret_service(self, bat_path):
-        try:
-            si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = subprocess.SW_HIDE
-            
-            # 1. Сначала удаляем старую службу (с небольшой паузой, чтобы Windows успела её "забыть")
-            subprocess.call("net stop zapret", shell=True, startupinfo=si, creationflags=0x08000000)
-            subprocess.call("sc delete zapret", shell=True, startupinfo=si, creationflags=0x08000000)
-            subprocess.call('taskkill /F /IM "winws.exe"', shell=True, startupinfo=si, creationflags=0x08000000)
-            time.sleep(0.5) 
-            
-            # 2. Читаем выбранный пользователем .bat файл
-            # Пробуем utf-8, если не получается — fallback на cp1251 (стандартная кодировка Windows)
-            try:
-                with open(bat_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except UnicodeDecodeError:
-                with open(bat_path, 'r', encoding='cp1251', errors='replace') as f:
-                    content = f.read()
-            
-            # Склеиваем длинные команды, разорванные символом переноса (^)
-            content = re.sub(r'\^\s*\n', ' ', content)
-            
-            args_str = ""
-            for line in content.split('\n'):
-                # Игнорируем закомментированные строки (rem или ::)
-                if 'winws.exe' in line.lower() and not line.strip().lower().startswith(('rem', '::')):
-                    match = re.search(r'winws\.exe["\']?\s+(.*)', line, re.IGNORECASE)
-                    if match:
-                        args_str = match.group(1).strip()
-                        break
-            
-            if not args_str:
-                log_error(f"Не удалось найти аргументы winws в файле {bat_path}")
-                return False
-                
-            # 3. Превращаем переменные батника в абсолютные пути
-            zapret_dir_slash = self.zapret_dir + "\\"
-            args_str = args_str.replace('%~dp0', zapret_dir_slash)
-            args_str = args_str.replace('%%BIN%%', zapret_dir_slash + "bin\\")
-            args_str = args_str.replace('%BIN%', zapret_dir_slash + "bin\\")
-            args_str = args_str.replace('%%LISTS%%', zapret_dir_slash + "lists\\")
-            args_str = args_str.replace('%LISTS%', zapret_dir_slash + "lists\\")
-            
-            # ПРАВИЛЬНАЯ подстановка игровых фильтров (как в оригинале - 12)
-            args_str = re.sub(r'%%?GameFilter(TCP|UDP)?%%?', '12', args_str, flags=re.IGNORECASE)
-            
-            # Убираем возможные остатки знаков переноса и лишние пробелы
-            args_str = args_str.replace('^', '')
-            args_str = re.sub(r'\s+', ' ', args_str)
-            
-            # Экранируем кавычки для системной утилиты sc
-            args_str = args_str.replace('"', '\\"')
-            
-            bin_path = os.path.join(self.zapret_dir, 'bin', 'winws.exe')
-            
-            # 4. Формируем команду регистрации Службы Windows
-            cmd_create = f'sc create zapret binPath= "\\"{bin_path}\\" {args_str}" DisplayName= "zapret" start= auto'
-            
-            # Создаем службу
-            subprocess.call(cmd_create, shell=True, startupinfo=si, creationflags=0x08000000)
-            subprocess.call('sc description zapret "Zapret DPI bypass software"', shell=True, startupinfo=si, creationflags=0x08000000)
-            
-            # 5. Делаем запись в реестр, чтобы оригинальный service.bat видел статус
-            bat_name = os.path.basename(bat_path).replace(".bat", "")
-            cmd_reg = f'reg add "HKLM\\System\\CurrentControlSet\\Services\\zapret" /v zapret-discord-youtube /t REG_SZ /d "{bat_name}" /f'
-            subprocess.call(cmd_reg, shell=True, startupinfo=si, creationflags=0x08000000)
-            
-            # Запускаем службу
-            res = subprocess.call("sc start zapret", shell=True, startupinfo=si, creationflags=0x08000000)
-            time.sleep(0.5)
-            is_running = any(p.name().lower() == "winws.exe" for p in psutil.process_iter(['name']))
-            return (res == 0 or is_running)
-            
-        except Exception as e:
-            log_error(f"Ошибка установки службы: {e}")
-            return False
+        return install_zapret_service(self.zapret_dir, bat_path)
+
 
     def launch_winws_direct(self, bat_path):
-        """Резервный запуск winws.exe напрямую процессом, если служба Windows недоступна."""
-        try:
-            try:
-                with open(bat_path, 'r', encoding='utf-8') as f: content = f.read()
-            except UnicodeDecodeError:
-                with open(bat_path, 'r', encoding='cp1251', errors='replace') as f: content = f.read()
-            
-            content = re.sub(r'\^\s*\n', ' ', content)
-            args_str = ""
-            for line in content.split('\n'):
-                if 'winws.exe' in line.lower() and not line.strip().lower().startswith(('rem', '::')):
-                    match = re.search(r'winws\.exe["\']?\s+(.*)', line, re.IGNORECASE)
-                    if match:
-                        args_str = match.group(1).strip()
-                        break
-            
-            if not args_str: return False
+        return launch_winws_direct(self.zapret_dir, bat_path)
 
-            zapret_dir_slash = self.zapret_dir + "\\"
-            args_str = args_str.replace('%~dp0', zapret_dir_slash)
-            args_str = args_str.replace('%%BIN%%', zapret_dir_slash + "bin\\")
-            args_str = args_str.replace('%BIN%', zapret_dir_slash + "bin\\")
-            args_str = args_str.replace('%%LISTS%%', zapret_dir_slash + "lists\\")
-            args_str = args_str.replace('%LISTS%', zapret_dir_slash + "lists\\")
-            args_str = re.sub(r'%%?GameFilter(TCP|UDP)?%%?', '12', args_str, flags=re.IGNORECASE)
-            args_str = args_str.replace('^', '')
-            args_str = re.sub(r'\s+', ' ', args_str)
-
-            bin_path = os.path.join(self.zapret_dir, 'bin', 'winws.exe')
-            if not os.path.exists(bin_path): return False
-
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = subprocess.SW_HIDE
-            subprocess.call('taskkill /F /IM "winws.exe"', shell=True, startupinfo=si, creationflags=0x08000000)
-            time.sleep(0.3)
-
-            cmd_str = f'"{bin_path}" {args_str}'
-            subprocess.Popen(cmd_str, cwd=self.zapret_dir, startupinfo=si, creationflags=0x08000000, shell=True)
-            time.sleep(0.8)
-            return any(p.name().lower() == "winws.exe" for p in psutil.process_iter(['name']))
-        except Exception as e:
-            log_error(f"launch_winws_direct error: {e}")
-            return False
-
-    def _install_files_sync(self, dest_path):
-        self.status_text = self.get_text("status_installing")
-        self.launcher_status = "BUSY"
-        try:
-            zip_path = resource_path(DATA_ARCHIVE_NAME)
-            if os.path.exists(zip_path):
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(APP_DATA_DIR)
-                make_hidden(dest_path)
-                self._refresh_bat_files()
-                return True
-            else:
-                log_error(f"Архив не найден: {zip_path}")
-                return False
-        except Exception as e:
-            log_error(f"Install sync error: {e}")
-            return False
 
     def start_process_logic(self):
         self.zapret_dir = locate_zapret_dir()
         if self.auto_repair:
              si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = subprocess.SW_HIDE
-             subprocess.call("ipconfig /flushdns & netsh interface ip delete arpcache", shell=True, startupinfo=si, creationflags=0x08000000)
+             subprocess.call(["ipconfig", "/flushdns"], startupinfo=si, creationflags=0x08000000)
+             subprocess.call(["netsh", "interface", "ip", "delete", "arpcache"], startupinfo=si, creationflags=0x08000000)
         
-        # Если папки нет или она пуста (нет winws.exe), распаковываем файлы синхронно
-        if not os.path.exists(self.zapret_dir) or not os.path.exists(os.path.join(self.zapret_dir, "bin", "winws.exe")): 
-            success = self._install_files_sync(self.zapret_dir)
-            if not success:
-                self.launcher_status, self.status_text = "OFF", self.get_text("status_no_file")
-                return
+        if not self._ensure_payload():
+            self.launcher_status, self.status_text = "OFF", self.get_text("status_no_file")
+            return
 
         if not self.selected_bat or self.selected_bat not in self.bat_files:
             self._refresh_bat_files()
@@ -1828,53 +3314,160 @@ class ZapretLauncher(ctk.CTk):
 
             if success:
                 self.launcher_status, self.start_time, self.status_text = "ON", time.time(), self.get_text("status_on")
+                self._update_discord(force=True)
                 self._launch_count += 1
+                self.desired_bypass = True
                 self._save_stats()
+                self.save_config()
                 self.play_sound("ON")
                 if self.notifications_enabled:
                     try: self.tray_icon.notify("Обход включён", "Zapret Launcher")
-                    except: pass
+                    except Exception: pass
             else:
                 self.launcher_status, self.status_text = "OFF", self.get_text("status_error")
+                self._update_discord(force=True)
         else: 
-            self.check_and_install_files()
+            self._ensure_payload()
             self.launcher_status, self.status_text = "OFF", self.get_text("status_no_file")
 
     def stop_process_logic(self):
-        si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = subprocess.SW_HIDE
-        
-        # 1. Корректно останавливаем и удаляем главную службу
-        subprocess.call("net stop zapret", shell=True, startupinfo=si, creationflags=0x08000000)
-        subprocess.call("sc delete zapret", shell=True, startupinfo=si, creationflags=0x08000000)
-        
-        # 2. На всякий случай сносим драйвер WinDivert (как советует оригинальный скрипт Запрета)
-        subprocess.call("net stop WinDivert", shell=True, startupinfo=si, creationflags=0x08000000)
-        subprocess.call("sc delete WinDivert", shell=True, startupinfo=si, creationflags=0x08000000)
-        subprocess.call("net stop WinDivert14", shell=True, startupinfo=si, creationflags=0x08000000)
-        subprocess.call("sc delete WinDivert14", shell=True, startupinfo=si, creationflags=0x08000000)
-        
-        # 3. Контрольный выстрел по всем остаткам процессов
-        for target in TARGET_PROCESSES: 
-            subprocess.call(f'taskkill /F /IM "{target}"', shell=True, startupinfo=si, creationflags=0x08000000)
-        
+        stop_services_and_processes()
+
         self.launcher_status, self.status_text = "OFF", self.get_text("status_ready")
+        self._update_discord(force=True)
+        self.desired_bypass = False
+        self.save_config()
         self.play_sound("OFF")
         if self.notifications_enabled:
             try: self.tray_icon.notify("Обход выключен", "Zapret Launcher")
-            except: pass
+            except Exception: pass
+
+
+    def _log_render_error(self, msg):
+        now = time.time()
+        if now - getattr(self, "_last_render_error", 0.0) >= 5.0:
+            self._last_render_error = now
+            log_error(msg)
+
+    def _render_compact(self, w, h, s, fs):
+        self.canvas.create_rectangle(0, 0, w, h, fill="#080914", outline="")
+        color = self.theme_color if self.launcher_status == "ON" else "#5a6591"
+        if self.launcher_status == "ON":
+            label = self.get_text("status_on")
+        elif self.launcher_status == "BUSY":
+            label = self.get_text("status_busy")
+            color = "#ff9900"
+        else:
+            label = "OFF"
+        self.canvas.create_oval(s(10), h / 2 - s(6), s(10) + s(12), h / 2 + s(6), fill=color, outline="")
+        self.canvas.create_text(s(30), h / 2, text=f"ZAPRET {label}", fill=color, anchor="w",
+                                font=("Consolas", fs(13), "bold"))
+        if self.launcher_status == "ON" and self.start_time:
+            el_time = int(time.time() - self.start_time)
+            self.canvas.create_text(w - s(12), h / 2,
+                                    text=f"{el_time//3600:02}:{(el_time%3600)//60:02}:{el_time%60:02}",
+                                    fill="#ccffdd", anchor="e", font=("Consolas", fs(11)))
+
+    def _render_intro(self, w, h):
+        """Стартовая анимация (osu-style): кольца, вращающиеся дуги, частицы, логотип."""
+        t = max(0.0, min(1.0, (time.time() - self._intro_start) / 2.4))
+        accent = self.theme_color
+        self.canvas.create_rectangle(0, 0, w, h, fill="#080914", outline="")
+        cx, cy = w / 2, h / 2 - 24
+
+        for i in range(4):
+            phase = (t * 1.8 - i * 0.16) % 1.0
+            if phase <= 0.02:
+                continue
+            r = 50 + phase * 300
+            color = self.interpolate_color("#080914", accent, max(0.0, 1.0 - phase))
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline=color, width=2)
+
+        spin = t * 720.0
+        for i in range(3):
+            start = (spin + i * 120) % 360
+            self.canvas.create_arc(cx - 92, cy - 92, cx + 92, cy + 92, start=start, extent=54,
+                                   style="arc", outline=accent, width=3)
+
+        r0 = 56 + 5 * math.sin(t * math.pi * 3)
+        self.canvas.create_oval(cx - r0, cy - r0, cx + r0, cy + r0, outline=accent, width=3)
+        self.canvas.create_line(cx, cy - 24, cx, cy + 24, fill=accent, width=6)
+
+        for i in range(10):
+            phase = (t * 2 + i / 10.0) % 1.0
+            ang = (i / 10.0) * 2 * math.pi + t * 4.0
+            rad = 120 + 70 * phase
+            px, py = cx + math.cos(ang) * rad, cy + math.sin(ang) * rad
+            self.canvas.create_oval(px - 2, py - 2, px + 2, py + 2,
+                                    fill=self.interpolate_color("#080914", accent, max(0.0, 1.0 - phase)),
+                                    outline="")
+
+        alpha = min(1.0, t * 2.4)
+        self.canvas.create_text(cx, cy + 122, text="ZAPRET",
+                                fill=self.interpolate_color("#080914", "white", alpha),
+                                font=("Segoe UI", self.fs(27), "bold"))
+        self.canvas.create_text(cx, cy + 158, text="L A U N C H E R",
+                                fill=self.interpolate_color("#080914", accent, alpha),
+                                font=("Segoe UI", self.fs(11), "bold"))
 
     def render_loop(self):
+        self._render_delay = RENDER_FRAME_MS
         try:
+            if self.discord is not None and time.time() - self._discord_ts >= 15.0:
+                self._discord_ts = time.time()
+                self._update_discord()
+            if self.idle_hide_min and not self.compact_mode:
+                try:
+                    if seconds_since_last_input() > self.idle_hide_min * 60:
+                        if not self._idle_hidden:
+                            self._idle_hidden = True
+                            self.iconify()
+                    else:
+                        self._idle_hidden = False
+                except Exception:
+                    pass
             self.canvas.delete("all")
             self.animation_step += 1
+            if self._intro_end > time.time():
+                cw_i, ch_i = self.canvas.winfo_width(), self.canvas.winfo_height()
+                self._render_intro(cw_i if cw_i > 10 else WINDOW_WIDTH,
+                                   ch_i if ch_i > 10 else WINDOW_HEIGHT)
+                return
+
+            if self._profile:
+                now_ts = time.time()
+                if self._frame_ts:
+                    self._frame_times.append(now_ts - self._frame_ts)
+                    if len(self._frame_times) > 30:
+                        self._frame_times.pop(0)
+                self._frame_ts = now_ts
+                if now_ts - self._app_cpu_ts >= 1.0:
+                    self._app_cpu_ts = now_ts
+                    try:
+                        self._app_cpu = self._proc.cpu_percent(None) if self._proc else 0.0
+                    except Exception:
+                        self._app_cpu = 0.0
+            else:
+                self._frame_ts = 0.0
+
+            if not self.winfo_viewable():
+                self._render_delay = RENDER_HIDDEN_MS
+                return
+
             cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
             w, h = (cw if cw > 10 else WINDOW_WIDTH), (ch if ch > 10 else WINDOW_HEIGHT)
             self.ui_scale = min(w / WINDOW_WIDTH, h / WINDOW_HEIGHT)
-            if self.ui_scale < 0.1: self.ui_scale = 0.1
-            s = self.s 
-            fs = self.fs 
+            self.ui_scale = max(self.ui_scale, 0.1)
+            s = self.s
+            fs = self.fs
 
             cx, cy = w/2, h/2
+
+            if self.compact_mode:
+                self._render_compact(w, h, s, fs)
+                self._render_delay = RENDER_COMPACT_MS
+                return
+
             
             # --- ЛОГИКА ТАЙМЕРА ЗАКРЫТИЯ МЕНЮ (10 СЕКУНД) ---
             if self.settings_open and (time.time() - getattr(self, 'menu_last_active', 0) > 10.0):
@@ -1882,21 +3475,18 @@ class ZapretLauncher(ctk.CTk):
                 self.mode_menu_open = False
             # -----------------------------------------------
 
-            if self.update_msg_timer > 0: self.update_msg_timer -= 1
-            
             def lerp(curr, target, factor=0.4): return curr + (target - curr) * factor
             self.switch_snow_pos = lerp(self.switch_snow_pos, 1.0 if self.snow_enabled else 0.0)
             self.switch_style_pos = lerp(self.switch_style_pos, 1.0 if self.minimal_mode else 0.0)
             self.switch_autorun_pos = lerp(self.switch_autorun_pos, 1.0 if self.autorun_enabled else 0.0)
             self.switch_minimized_pos = lerp(self.switch_minimized_pos, 1.0 if self.start_minimized else 0.0)
-            self.switch_repair_pos = lerp(self.switch_repair_pos, 1.0 if self.auto_repair else 0.0)
             self.switch_autorestart_pos = lerp(self.switch_autorestart_pos, 1.0 if self.auto_restart else 0.0)
             self.switch_proxy_pos = lerp(self.switch_proxy_pos, 1.0 if self.proxy_status == "ON" else 0.0)
             
             self.settings_anim = lerp(self.settings_anim, 1.0 if self.settings_open else 0.0, factor=0.08)
             self.mode_menu_anim = lerp(self.mode_menu_anim, 1.0 if self.mode_menu_open else 0.0, factor=0.12)
             
-            self.current_warp_speed = lerp(self.current_warp_speed, 45.0 if self.launcher_status == "ON" else 2.5, 0.05)
+            self.current_warp_speed = lerp(self.current_warp_speed, 68.0 if self.launcher_status == "ON" else 3.8, 0.05)
             active_color = self.theme_color
 
             # 1. Базовая заливка фона
@@ -1912,9 +3502,10 @@ class ZapretLauncher(ctk.CTk):
 
                 grid_c = self.interpolate_color("#1a1e3d", active_color, 0.12)
                 spacing = s(60)
-                grid_speed = (self.animation_step * 1.0) % spacing
+                grid_speed = (self.animation_step * 1.5) % spacing
                 
-                for i in range(-60, 61):
+                grid_half = int((w / 2 + s(60)) / max(1.0, s(20))) + 1
+                for i in range(-grid_half, grid_half + 1):
                     x_far = cx + i * s(20)
                     x_near = cx + i * s(400)
                     self.canvas.create_line(x_far, cy, x_near, h, fill=grid_c, width=1)
@@ -1945,6 +3536,11 @@ class ZapretLauncher(ctk.CTk):
                 ping_val = self.hud_values.get('PING', '---')
                 ping_col = "#5a6591" if ping_val == '---' else (active_color if self.launcher_status == "ON" else "#5a6591")
                 self.canvas.create_text(g+s(10), g+s(45), text=f"PING: {ping_val}", fill=ping_col, font=("Consolas", fs(9)), anchor="w")
+                if self._profile:
+                    avg_dt = sum(self._frame_times) / len(self._frame_times) if self._frame_times else 0.0
+                    fps = int(1.0 / avg_dt) if avg_dt > 0 else 0
+                    self.canvas.create_text(g+s(10), g+s(60), text=f"FPS: {fps}  APP: {self._app_cpu:.0f}%",
+                                            fill="#ff9900", font=("Consolas", fs(9)), anchor="w")
 
                 viz_x, viz_y = w - g - s(10), h - g - s(15)
                 for i in range(len(self.viz_bars)):
@@ -2095,7 +3691,7 @@ class ZapretLauncher(ctk.CTk):
                 
                 # Детектор bypass + статистика (Y=415..435)
                 bypass_col = active_color if self._bypass_check == "OK" else ("#ff2a2a" if self._bypass_check == "FAIL" else "#3d446e")
-                bypass_txt = f"\u2713 WORK" if self._bypass_check == "OK" else ("\u2717 FAIL" if self._bypass_check == "FAIL" else "CHECK...")
+                bypass_txt = "\u2713 WORK" if self._bypass_check == "OK" else ("\u2717 FAIL" if self._bypass_check == "FAIL" else "CHECK...")
                 self.rounded_rect(mx_menu+s(20), s(415), mx_menu+s(125), s(435), r=s(5), fill_col="#0e1124", outline_col=bypass_col)
                 self.canvas.create_text(mx_menu+s(72), s(425), text=bypass_txt, fill=bypass_col, font=("Consolas", fs(8), "bold"))
 
@@ -2137,7 +3733,19 @@ class ZapretLauncher(ctk.CTk):
                 
                 s_pts_m = self.draw_icon("star", mx_menu+s(190), s(642), s(20), "")
                 self.canvas.create_polygon(s_pts_m, fill="yellow" if self.selected_bat == self.favorite_bat else "", outline="#5a6591", width=1)
-                
+
+                # G12: Discord RPC (кнопка-тумблер Y=676..706)
+                hvr_dsc = (mx_menu+s(20) <= self.mouse_x <= mx_menu+s(240) and s(676) <= self.mouse_y <= s(706))
+                dsc_col = active_color if self.discord_rpc else "#2a305e"
+                self.rounded_rect(mx_menu+s(20), s(676), mx_menu+s(240), s(706), r=s(5),
+                                  fill_col="#1a3328" if self.discord_rpc else ("#15182e" if hvr_dsc else "#0e1124"),
+                                  outline_col=dsc_col)
+                dsc_state = "ON" if self.discord_rpc else "OFF"
+                self.canvas.create_text(mx_menu+s(130), s(691),
+                                        text=f"{self.get_text('discord_rpc_lbl')}: {dsc_state}",
+                                        fill="white" if (self.discord_rpc or hvr_dsc) else "#5a6591",
+                                        font=("Segoe UI", fs(9), "bold"))
+
                 if self.mode_menu_anim > 0.01:
                     actual_files = self.bat_files
                     v_cnt = min(len(actual_files), 16)
@@ -2234,10 +3842,11 @@ class ZapretLauncher(ctk.CTk):
                 self.canvas.create_line(notif_x-s(4), notif_y-s(4), notif_x+s(4), notif_y+s(4), fill=notif_col, width=2)
                 self.canvas.create_line(notif_x-s(4), notif_y+s(4), notif_x+s(4), notif_y-s(4), fill=notif_col, width=2)
 
-        except Exception as e: 
-            log_error(f"Render Error: {e}")
-        finally: 
-            self.after(20, self.render_loop)
+        except Exception as e:
+            self._log_render_error(f"Render Error: {e}")
+        finally:
+            self.after(getattr(self, "_render_delay", RENDER_FRAME_MS), self.render_loop)
+
 
     def perform_update(self):
         if self.is_updating: return
@@ -2249,103 +3858,99 @@ class ZapretLauncher(ctk.CTk):
             return
 
         target_url = self.update_data.get("download_url")
-        target_hash = self.update_data.get("hash")
+        target_hash = (self.update_data.get("hash") or "").strip().lower()
 
-        def _fetch(url, dest):
-            """Download with chunked progress + SSL fallback on any error."""
-            for verify in (True, False):
-                try:
-                    ctx = ssl.create_default_context()
-                    if not verify:
-                        ctx.check_hostname = False
-                        ctx.verify_mode = ssl.CERT_NONE
-                    req = urllib.request.Request(
-                        url, headers={"User-Agent": f"ZapretLauncher/{CURRENT_VERSION}"}
-                    )
-                    with urllib.request.urlopen(req, context=ctx, timeout=60) as resp, \
-                         open(dest, 'wb') as out:
-                        total = int(resp.headers.get('Content-Length', 0))
-                        done = 0
-                        while True:
-                            chunk = resp.read(65536)
-                            if not chunk: break
-                            out.write(chunk)
-                            done += len(chunk)
-                            if total > 0:
-                                self.update_state = f"dl_{int(done*100/total)}"
-                        out.flush()
-                    return
-                except Exception as e:
-                    if verify:
-                        log_error(f"Download SSL=True failed: {e}, retrying without verify")
-                        continue
-                    raise
+        if not target_hash:
+            log_error("Апдейт отклонён: в манифесте нет хэша")
+            self.is_updating = False
+            self.update_state = "failed"
+            return
+        if not is_trusted_update_url(target_url):
+            log_error(f"Апдейт отклонён: недоверенный URL {target_url}")
+            self.is_updating = False
+            self.update_state = "failed"
+            return
+
+        def _download(url, dest):
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={"User-Agent": f"ZapretLauncher/{CURRENT_VERSION}"})
+            with urllib.request.urlopen(req, context=ctx, timeout=60) as resp, open(dest, 'wb') as out:
+                total = int(resp.headers.get('Content-Length', 0))
+                if total and total > MAX_UPDATE_BYTES:
+                    raise ValueError(f"Слишком большой файл обновления: {total} байт")
+                done = 0
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk: break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if done > MAX_UPDATE_BYTES:
+                        raise ValueError("Превышен лимит размера обновления")
+                    if total > 0:
+                        self.update_state = f"dl_{int(done*100/total)}"
+                out.flush()
 
         def _upd():
             try:
+                cur_exe = current_exe_path()
                 temp_dir = os.environ.get('TEMP', os.path.expanduser('~'))
-                upd_exe  = os.path.join(temp_dir, "Zapret_Update.exe")
-                upd_bat  = os.path.join(temp_dir, "zapret_updater.bat")
+                upd_exe = os.path.join(temp_dir, "Zapret_Update.exe")
+                try:
+                    if os.path.exists(upd_exe): os.remove(upd_exe)
+                except Exception: pass
 
-                _fetch(target_url, upd_exe)
+                _download(target_url, upd_exe)
                 self.update_state = "verifying"
 
-                # Hash verification
-                if target_hash:
-                    h = hashlib.sha256()
-                    with open(upd_exe, "rb") as f:
-                        for block in iter(lambda: f.read(65536), b""):
-                            h.update(block)
-                    if h.hexdigest().lower() != target_hash.lower():
-                        self.is_updating = False
-                        self.update_state = "hash_fail"
-                        try: os.remove(upd_exe)
-                        except: pass
-                        log_error(f"Hash mismatch: expected {target_hash}, got {h.hexdigest()}")
-                        return
+                new_exe = cur_exe + ".new"
 
-                # Determine current exe (works in both frozen .exe and dev .py)
-                cur_exe = sys.executable if getattr(sys, 'frozen', False) \
-                          else os.path.abspath(sys.argv[0])
+                h = hashlib.sha256()
+                with open(upd_exe, 'rb') as src_f, open(new_exe, 'wb') as dst_f:
+                    for block_data in iter(lambda: src_f.read(65536), b""):
+                        h.update(block_data)
+                        dst_f.write(block_data)
+                    dst_f.flush()
+                    os.fsync(dst_f.fileno())
 
-                # Get 8.3 short path to avoid Cyrillic/Unicode in bat file
-                # GetShortPathNameW returns ASCII-safe path (e.g. C:\Users\ПАПКИ~1 -> C:\USERS\PAPKI~1)
-                def _short_path(path):
-                    try:
-                        buf = ctypes.create_unicode_buffer(512)
-                        ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
-                        return buf.value if buf.value else path
-                    except Exception:
-                        return path
+                if h.hexdigest().lower() != target_hash:
+                    self.update_state = "hash_fail"
+                    log_error(f"Hash mismatch: expected {target_hash}, got {h.hexdigest()}")
+                    for path in (new_exe, upd_exe):
+                        try: os.remove(path)
+                        except Exception: pass
+                    self.is_updating = False
+                    return
 
-                cur_exe_s = _short_path(cur_exe)
-                upd_exe_s = _short_path(upd_exe)
+                old_exe = cur_exe + ".old"
+                try:
+                    if os.path.exists(old_exe): os.remove(old_exe)
+                except Exception: pass
 
-                # Bat written in cp866 — OEM code page that cmd.exe actually uses
-                bat = (
-                    "@echo off\r\n"
-                    "ping 127.0.0.1 -n 4 > nul\r\n"
-                    ":retry\r\n"
-                    f'del /f /q "{cur_exe_s}" > nul 2>&1\r\n'
-                    f'if exist "{cur_exe_s}" goto retry\r\n'
-                    f'move /y "{upd_exe_s}" "{cur_exe_s}" > nul\r\n'
-                    f'start "" "{cur_exe_s}"\r\n'
-                    'del "%~f0"\r\n'
-                )
-                with open(upd_bat, "w", encoding="cp866") as f:
-                    f.write(bat)
+                try:
+                    os.replace(cur_exe, old_exe)
+                except Exception as e:
+                    log_error(f"Не удалось переименовать текущий exe: {e}")
+                    self.is_updating = False
+                    self.update_state = "failed"
+                    try: os.remove(new_exe)
+                    except Exception: pass
+                    return
 
-                try: winsound.PlaySound(None, winsound.SND_PURGE)
-                except: pass
+                try:
+                    os.replace(new_exe, cur_exe)
+                except Exception as e:
+                    log_error(f"Не удалось установить обновление: {e}")
+                    try: os.replace(old_exe, cur_exe)
+                    except Exception: pass
+                    self.is_updating = False
+                    self.update_state = "failed"
+                    return
 
-                # ShellExecuteW runas — does NOT depend on .bat file association
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", "cmd.exe",
-                    f'/c "{upd_bat}"',
-                    None, 0  # SW_HIDE
-                )
+                try: os.remove(upd_exe)
+                except Exception: pass
+
+                subprocess.Popen([cur_exe], close_fds=True)
                 os._exit(0)
-
             except Exception as e:
                 self.is_updating = False
                 self.update_state = "failed"
@@ -2354,6 +3959,10 @@ class ZapretLauncher(ctk.CTk):
         threading.Thread(target=_upd, daemon=True).start()
 
 if __name__ == "__main__":
+    install_crash_handler("tk")
+    if "--install-service" in sys.argv:
+        sys.exit(0 if cli_install_service() else 1)
+    record_install_mode()
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "ZapretLauncherSingleInstanceMutex")
     if ctypes.windll.kernel32.GetLastError() == 183:
         sys.exit(0)
@@ -2364,11 +3973,10 @@ if __name__ == "__main__":
             
             # --- ИСПРАВЛЕННОЕ ЗАКРЫТИЕ ОКНА ---
             def on_closing():
-                # 1. Мгновенно скрываем окно (пользователь думает, что программа закрылась)
                 app_launcher.withdraw()
-                # 2. Спокойно и до конца удаляем все службы (без фоновых потоков, чтобы Python дождался конца)
+                try: app_launcher._save_stats()
+                except Exception: pass
                 app_launcher.stop_process_logic()
-                # 3. Уничтожаем окно и завершаем процесс
                 app_launcher.destroy()
                 os._exit(0)
                 

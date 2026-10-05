@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: changelog-sync
+        name: changelog sync (CHANGELOG.md -> zapret_new_win.py + update_info.json)
+        entry: python tools/sync_changelog.py --check
+        language: system
+        pass_filenames: false
+      - id: smoke
+        name: smoke tests
+        entry: python tools/smoke.py
+        language: system
+        pass_filenames: false
