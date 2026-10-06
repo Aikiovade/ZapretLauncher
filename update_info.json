@@ -1,6 +1,6 @@
 {
   "version": "17.5",
-  "hash": "15E0FA325BE89379D17D446B55684FE017D78BD1EC44A7F486F2A5E0BE16F087",
+  "hash": "AF21068E6DF2C4E598675A2CAFEF6375349D7B592424CC3E8DEF85F05329E751",
   "download_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.5/ZapretLauncher-17.5-setup.exe",
   "changelog": [
     "+ Windows-интеграция: оверлей статуса на иконке панели задач, кнопки на эскизе (Вкл/Выкл, Тесты, Стратегии), прогресс тестов и загрузки на иконке, вспышка при сбое",
@@ -20,5 +20,5 @@
   ],
   "package": "zapret-discord-youtube-1.10.3",
   "installer_url": "https://github.com/Aikiovade/ZapretLauncher/releases/download/v17.5/ZapretLauncher-17.5-setup.exe",
-  "installer_sha256": "15E0FA325BE89379D17D446B55684FE017D78BD1EC44A7F486F2A5E0BE16F087"
+  "installer_sha256": "AF21068E6DF2C4E598675A2CAFEF6375349D7B592424CC3E8DEF85F05329E751"
 }

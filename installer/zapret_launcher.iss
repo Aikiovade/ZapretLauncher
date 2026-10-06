@@ -393,3 +393,17 @@ begin
   if CloseTimer <> 0 then
     KillTimer(0, CloseTimer);
 end;
+
+{ Запущенное приложение держит Zapret.exe (DeleteFile: код 32) — закрываем перед
+  заменой файлов. Работает и в silent-режиме (обновление через апдейтер). }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  KillCode: Integer;
+begin
+  if CurStep = ssInstall then
+  begin
+    Exec('taskkill.exe', '/F /IM Zapret.exe /T', '', SW_HIDE, ewWaitUntilTerminated, KillCode);
+    Exec('taskkill.exe', '/F /IM ZapretWeb.exe /T', '', SW_HIDE, ewWaitUntilTerminated, KillCode);
+    Sleep(600);
+  end;
+end;
