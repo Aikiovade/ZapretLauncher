@@ -85,6 +85,12 @@ Name: "{commonappdata}\ZapretLauncher"; Permissions: admins-full users-readexec
 ; Чистим exe прошлой установки (в т.ч. ZapretWeb.exe, если он остался от старых сборок)
 Type: files; Name: "{app}\Zapret.exe"
 Type: files; Name: "{app}\ZapretWeb.exe"
+; Хвосты апдейтера и прерванных установок — старые файлы не должны оставаться
+Type: files; Name: "{app}\Zapret.exe.old"
+Type: files; Name: "{app}\Zapret.exe.new"
+Type: files; Name: "{app}\ZapretWeb.exe.old"
+Type: files; Name: "{app}\ZapretWeb.exe.new"
+Type: filesandordirs; Name: "{app}\is-*.tmp"
 
 [Files]
 Source: "..\dist\Zapret.exe"; DestDir: "{app}"; Flags: ignoreversion

@@ -1,10 +1,9 @@
 """CI: обновляет update_info.json после сборки релиза.
 
 Что делает:
-- считает sha256 собранного exe (для справки);
-- если найден собранный установщик (Setup.exe) — пишет `installer_url`/`installer_sha256`,
-  а также `download_url`/`hash` указывают на Setup (переход старых 17.3-клиентов на установщик);
-- без установщика — только `hash` exe (self-update, portable);
+- `download_url`/`hash` — на собранный exe (self-update portable/desktop-копий);
+- если найден установщик (Setup.exe) — `installer_url`/`installer_sha256` на него
+  (установленные версии обновляются через тихий Setup, download_url их не касается);
 - при наличии MANIFEST_SIGNING_KEY (hex seed) — подписывает манифест Ed25519;
 - если в zapret_new_win.py задан UPDATE_PUBKEY_HEX — сверяет, что подпись делается тем же ключом.
 
@@ -53,7 +52,10 @@ def main(argv=None):
         data = json.load(f)
 
     data["hash"] = sha256_upper(exe_path)
-    print("exe hash:", data["hash"])
+    if args.repo and args.tag:
+        data["download_url"] = (f"https://github.com/{args.repo}/releases/download/"
+                                f"{args.tag}/{os.path.basename(exe_path)}")
+    print("self-update exe:", data.get("download_url"), data["hash"][:16], "...")
 
     setups = sorted(glob.glob(os.path.join(ROOT, args.setup_glob) if not os.path.isabs(args.setup_glob) else args.setup_glob))
     if setups:
@@ -61,16 +63,11 @@ def main(argv=None):
         setup_sha = sha256_upper(setup)
         data["installer_sha256"] = setup_sha
         if args.repo and args.tag:
-            url = (f"https://github.com/{args.repo}/releases/download/"
-                   f"{args.tag}/{os.path.basename(setup)}")
-            data["installer_url"] = url
-            # Переход 17.3→установщик: старые клиенты качают download_url и сверяют hash —
-            # отдаём им Setup.exe, чтобы они мигрировали на установленную версию.
-            data["download_url"] = url
-            data["hash"] = setup_sha
-        print("update artifact: setup |", data.get("installer_url"), setup_sha[:16], "...")
+            data["installer_url"] = (f"https://github.com/{args.repo}/releases/download/"
+                                     f"{args.tag}/{os.path.basename(setup)}")
+        print("installer (installed updates):", data.get("installer_url"), setup_sha[:16], "...")
     else:
-        print("Установщик не найден — обновляется только hash exe (self-update)")
+        print("Установщик не найден — installer_* не обновляется")
 
     seed = os.environ.get("MANIFEST_SIGNING_KEY", "").strip()
     if seed:

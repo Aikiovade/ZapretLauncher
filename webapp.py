@@ -672,6 +672,10 @@ class Api:
             cur = core.current_exe_path()
             new = cur + ".new"
             shutil.copy2(tmp, new)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
             old = cur + ".old"
             try:
                 if os.path.exists(old):
@@ -1134,6 +1138,7 @@ def main():
         return 0
 
     core.ensure_app_data()
+    core.cleanup_stale_update_files()
     core.record_install_mode()
     core.ensure_payload()
     api = Api()

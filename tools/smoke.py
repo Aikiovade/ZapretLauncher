@@ -374,16 +374,21 @@ def main():
             manifests_ok = False
             print("manifest check:", man_name, e)
     check("manifest installer fields", manifests_ok)
-    transition_ok = True
+    channels_ok = True
     for man_name in ("update_info.json", "update_info_beta.json"):
         try:
             with open(os.path.join(ROOT, man_name), encoding="utf-8") as f:
                 man = json.load(f)
-            transition_ok = (transition_ok and str(man.get("download_url", "")).endswith("-setup.exe")
-                             and man.get("hash") == man.get("installer_sha256"))
+            channels_ok = (channels_ok
+                           and str(man.get("download_url", "")).endswith(".exe")
+                           and not str(man.get("download_url", "")).endswith("-setup.exe")
+                           and re.match(r"^[0-9A-Fa-f]{64}$", str(man.get("hash", "")))
+                           and str(man.get("installer_url", "")).endswith("-setup.exe")
+                           and re.match(r"^[0-9A-Fa-f]{64}$", str(man.get("installer_sha256", "")))
+                           and man.get("hash") != man.get("installer_sha256"))
         except Exception:
-            transition_ok = False
-    check("manifest 17.3->installer transition", transition_ok)
+            channels_ok = False
+    check("manifest channels (exe self-update + setup installer)", channels_ok)
     check("installer update helpers", all(hasattr(app, f) for f in
           ("update_mode", "installer_update_available", "installed_exe_path",
            "launch_installer_and_restart", "cli_install_service", "ensure_data_dir_acl",

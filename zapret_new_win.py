@@ -435,6 +435,21 @@ def current_exe_path():
         return sys.executable
     return os.path.abspath(sys.argv[0])
 
+
+def cleanup_stale_update_files():
+    """Хвост апдейтера рядом с exe: .new от прерванной загрузки — убираем при старте."""
+    try:
+        for suffix in (".new",):
+            path = current_exe_path() + suffix
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    log_event("update_leftover_removed", file=os.path.basename(path))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 # ----------------------------------
 
 # Цветовые темы
@@ -2706,6 +2721,7 @@ class ZapretLauncher(ctk.CTk):
 
     def cleanup_old_exe(self):
         try:
+            cleanup_stale_update_files()
             temp_dir = os.environ.get('TEMP', os.path.expanduser('~'))
             vbs_path = os.path.join(temp_dir, "updater.vbs")
             bat_path = os.path.join(temp_dir, "updater.bat")
