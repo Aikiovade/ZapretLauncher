@@ -134,6 +134,7 @@ def test_golden_strategy_args():
     assert golden, "пустой golden-набор"
     for bat, expected in golden.items():
         actual = app.parse_strategy_bat(os.path.join(pkg, bat), pkg)
+        actual = actual.replace(pkg + "\\", "<PKG>\\").replace(pkg + "/", "<PKG>/")
         assert actual == expected, f"регрессия парсера: {bat}"
 
 
@@ -288,3 +289,73 @@ def test_install_mode_helpers():
     assert isinstance(app.recorded_install_mode(), dict)
     assert app.record_install_mode() == {}  # не frozen -> ничего не пишем
     assert app.installed_exe_path("ZapretWeb.exe").endswith(os.path.join("ZapretLauncher", "ZapretWeb.exe"))
+
+
+def test_pick_rotation_target():
+    strategies = ["a.bat", "b.bat", "c.bat"]
+    assert app.pick_rotation_target("a.bat", None, strategies, {}) == "b.bat"
+    assert app.pick_rotation_target("b.bat", "c.bat", strategies, {}) == "c.bat"
+    assert app.pick_rotation_target("a.bat", None, strategies, {"c.bat": 0.9, "b.bat": 0.2}) == "c.bat"
+    assert app.pick_rotation_target("c.bat", None, strategies, {"c.bat": 1.0}) == "a.bat"
+    assert app.pick_rotation_target("solo.bat", None, ["solo.bat"], {}) == "solo.bat"
+    assert app.pick_rotation_target("x.bat", None, [], {}) == "x.bat"
+
+
+def test_next_recovery_step_ladder():
+    now = 1_000_000.0
+    assert app.next_recovery_step("degraded", [], [], now) == "rotate"
+    assert app.next_recovery_step("degraded", ["rotate"], [], now) == "restart"
+    assert app.next_recovery_step("service_down", [], [], now) == "restart"
+    assert app.next_recovery_step("service_down", ["restart", "recreate"], [], now) == "repack"
+    assert app.next_recovery_step("service_down", ["restart", "recreate", "repack"], [], now) == "notify"
+    assert app.next_recovery_step("service_down", ["restart", "recreate", "repack", "notify"], [], now) is None
+    assert app.next_recovery_step("unknown", [], [], now) is None
+
+
+def test_next_recovery_step_cooldown_and_limit():
+    now = 1_000_000.0
+    history = [{"action": "restart", "ts": now - 30}]
+    assert app.next_recovery_step("service_down", [], history, now) == "recreate"
+    old = [{"action": "restart", "ts": now - 3600}]
+    assert app.next_recovery_step("service_down", [], old, now) == "restart"
+    many = [{"action": "rotate", "ts": now - i} for i in range(6)]
+    assert app.next_recovery_step("degraded", [], many, now) == "notify"
+    assert app.next_recovery_step("degraded", ["notify"], many, now) is None
+
+
+def test_log_incident_and_read():
+    action = f"pytest-{os.getpid()}"
+    app.log_incident(action, "ok", level="info", details="unit test")
+    items = app.read_incidents(limit=10)
+    assert any(item.get("action") == action and item.get("result") == "ok" for item in items)
+
+
+def test_read_incidents_resilient():
+    path = app.INCIDENTS_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("not json at all\n")
+        f.write('{"ts": 1, "action": "resilient-x", "result": "ok"}\n')
+        f.write("[1, 2, 3]\n")
+        f.write('{"ts": 2, "action": "resilient-y", "result": "ok"}\n')
+    items = app.read_incidents(limit=200)
+    actions = [item.get("action") for item in items]
+    assert "resilient-x" in actions and "resilient-y" in actions
+    assert all(isinstance(item, dict) for item in items)
+
+
+def test_next_recovery_step_window_boundary():
+    now = 2_000_000.0
+    at_edge = [{"action": "rotate", "ts": now - 1800.0 - i} for i in range(6)]
+    assert app.next_recovery_step("degraded", [], at_edge, now) == "rotate"
+    inside = [{"action": "rotate", "ts": now - 100 - i} for i in range(6)]
+    assert app.next_recovery_step("degraded", [], inside, now) == "notify"
+
+
+def test_is_strategy_bat():
+    assert app.is_strategy_bat("general (ALT).bat")
+    assert app.is_strategy_bat("custom_service mode.bat")
+    assert not app.is_strategy_bat("service.bat")
+    assert not app.is_strategy_bat("SERVICE.BAT")
+    assert not app.is_strategy_bat("readme.txt")
+    assert not app.is_strategy_bat("service.bat.json")

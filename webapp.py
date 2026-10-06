@@ -739,10 +739,12 @@ class Api:
             return {"ok": False}
 
     def _auto_rotate_now(self, score):
-        """B4: деградация — переключиться на избранную стратегию и перезапустить."""
+        """B4/17.5: деградация — выбрать другую стратегию (лучшая по тестам/избранная) и перезапустить."""
         texts = core.TRANSLATIONS_DATA.get(self.lang, core.TRANSLATIONS_DATA["EN"])
-        target = self.favorite_bat if self.favorite_bat and self.favorite_bat != self.selected_bat else self.selected_bat
-        if target != self.selected_bat:
+        target = core.pick_rotation_target(self.selected_bat, self.favorite_bat,
+                                           core.list_strategies(self.zapret_dir),
+                                           self.strategy_scores)
+        if target and target != self.selected_bat:
             self.selected_bat = target
             self._save_config()
         core.log_event("auto_rotate", strategy=target, score=round(score, 3))

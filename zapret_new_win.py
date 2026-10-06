@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 import winsound
 import zipfile
-from tkinter import simpledialog
+from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
 import keyboard
@@ -32,11 +32,13 @@ from PIL import Image, ImageDraw
 
 import discord_rpc
 import ed25519
+import strategy_builder
+import win_taskbar
 
 # ======================================================================
 # 1. КОНФИГУРАЦИЯ И ПУТИ
 # ======================================================================
-CURRENT_VERSION = "17.4"
+CURRENT_VERSION = "17.5"
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/Aikiovade/ZapretLauncher/main/update_info.json"
 
 # --- GLOBAL UI SETTINGS (Critical for fast start) ---
@@ -76,6 +78,22 @@ SOUND_STOP_FILE = os.path.join("sounds", "stop.wav")
 
 # CHANGELOG:BEGIN (генерируется tools/sync_changelog.py из CHANGELOG.md — не править вручную)
 CHANGELOG = [
+    ("v17.5", [
+        "+ Windows-интеграция: оверлей статуса на иконке панели задач, кнопки на эскизе (Вкл/Выкл, Тесты, Стратегии), прогресс тестов и загрузки на иконке, вспышка при сбое",
+        "+ Самовосстановление («Иммунитет»): лестница restart → пересоздание службы → перепаковка пакета → уведомление, журнал инцидентов, авто-ротация при деградации",
+        "+ Конструктор стратегий: визуальная правка winws-параметров, проверка на пробах сервисов, сохранение/экспорт/импорт своих стратегий",
+        "+ OSD-уведомление при включении/выключении обхода",
+        "+ Новый звук действий (alert-03)",
+        "+ Установщик: статичный баннер без анимации и звука, переработанная вёрстка, авто-закрытие финала через 5 секунд",
+        "* Исправлено: перепаковка пакета выполняется после остановки службы (не падает на занятом winws.exe)",
+        "* Исправлено: лимит размера проверяется для всех файлов при импорте стратегии (zip-бомба)",
+        "* Исправлено: гонка самовосстановления (параллельный запуск лечения из watchdog и монитора)",
+        "* Исправлено: статус после проверки конструктора восстанавливается по факту работы службы",
+        "* Исправлено: кастомные стратегии со словом «service» в имени больше не скрываются из списка",
+        "* Исправлено: флаги проверки/лечения не залипают при ошибках; тест блокируется при активных операциях",
+        "* Валидация: запрещены кавычки в значениях параметров стратегий",
+        "+ Инструмент визуальной проверки установщика (tools/installer_visual_test.py); тесты: 52 pytest, 103 smoke",
+    ]),
     ("v17.4", [
         "+ Запрет обновлён до 1.10.3 (стратегия ALT13, обновлённые списки и утилиты)",
         "+ TgWsProxy обновлён до v1.10.4",
@@ -386,6 +404,25 @@ def ensure_payload():
             return current
 
 
+def repack_payload():
+    """17.5: принудительная перераспаковка дата-архива (шаг «repack» самовосстановления)."""
+    with _payload_lock:
+        try:
+            zip_path = resource_path(DATA_ARCHIVE_NAME)
+            if not os.path.exists(zip_path):
+                ok, message = update_zapret_data()
+                return bool(ok), message
+            ensure_app_data()
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                _safe_extractall(zip_ref, APP_DATA_DIR)
+            complete = payload_complete(os.path.join(APP_DATA_DIR, FOLDER_NAME))
+            log_event("repack_payload", complete=complete)
+            return complete, "repacked"
+        except Exception as e:
+            log_error(f"repack_payload error: {e}")
+            return False, str(e)
+
+
 ZAPRET_DIR = locate_zapret_dir()
 
 CONFIG_PATH = os.path.join(APP_DATA_DIR, CONFIG_FILE_NAME)
@@ -542,7 +579,45 @@ TRANSLATIONS_DATA = {
         "discord_ok": "Подключено к Discord",
         "discord_lib_missing": "pypresence не установлен",
         "discord_client_id_title": "Discord Client ID",
-        "discord_client_id_hint": "Создайте приложение на discord.com/developers/applications и вставьте Application ID (17-20 цифр)"
+        "discord_client_id_hint": "Создайте приложение на discord.com/developers/applications и вставьте Application ID (17-20 цифр)",
+        "more_settings": "Ещё…",
+        "more_title": "Дополнительно",
+        "taskbar_lbl": "Панель задач",
+        "osd_lbl": "OSD при переключении",
+        "self_heal_lbl": "Самовосстановление",
+        "inc_title": "Журнал инцидентов",
+        "inc_open": "Журнал инцидентов",
+        "inc_copy": "Копировать",
+        "inc_refresh": "Обновить",
+        "inc_empty": "Инцидентов пока не было",
+        "builder_open": "Конструктор стратегий",
+        "sb_base": "База:",
+        "sb_load": "Загрузить",
+        "sb_global": "Общие фильтры",
+        "sb_profile": "Профиль",
+        "sb_add": "Добавить",
+        "sb_save": "Сохранить стратегию",
+        "sb_name": "Имя:",
+        "sb_test": "Проверить",
+        "sb_testing": "Проверка… (обход временно выключен)",
+        "sb_score": "Результат: {score}",
+        "sb_export": "Экспорт",
+        "sb_import": "Импорт",
+        "sb_test_warn": "Обход будет временно выключен на время проверки. Продолжить?",
+        "sb_saved": "Сохранено: {name}",
+        "sb_error": "Ошибка: {error}",
+        "sb_restored": "обход восстановлен",
+        "sb_overwrite": "Стратегия «{name}» уже есть. Перезаписать?",
+        "sb_no_custom": "нет своих стратегий",
+        "sb_exported": "Экспортировано: {name}",
+        "sb_busy": "Сейчас занято — дождитесь завершения операции",
+        "osd_on": "Обход включён",
+        "osd_off": "Обход выключен",
+        "heal_fixed": "Проблема устранена автоматически",
+        "heal_help": "Не удалось восстановить обход — нужна помощь",
+        "tb_toggle": "Вкл/Выкл",
+        "tb_tests": "Тесты",
+        "tb_strategies": "Стратегии"
     },
     "EN": {
         "main_title": "ZAPRET",
@@ -671,7 +746,45 @@ TRANSLATIONS_DATA = {
         "discord_ok": "Connected to Discord",
         "discord_lib_missing": "pypresence is not installed",
         "discord_client_id_title": "Discord Client ID",
-        "discord_client_id_hint": "Create an app at discord.com/developers/applications and paste its Application ID (17-20 digits)"
+        "discord_client_id_hint": "Create an app at discord.com/developers/applications and paste its Application ID (17-20 digits)",
+        "more_settings": "More…",
+        "more_title": "Advanced",
+        "taskbar_lbl": "Taskbar",
+        "osd_lbl": "Toggle OSD",
+        "self_heal_lbl": "Self-healing",
+        "inc_title": "Incident log",
+        "inc_open": "Incident log",
+        "inc_copy": "Copy",
+        "inc_refresh": "Refresh",
+        "inc_empty": "No incidents yet",
+        "builder_open": "Strategy builder",
+        "sb_base": "Base:",
+        "sb_load": "Load",
+        "sb_global": "Global filters",
+        "sb_profile": "Profile",
+        "sb_add": "Add",
+        "sb_save": "Save strategy",
+        "sb_name": "Name:",
+        "sb_test": "Test",
+        "sb_testing": "Testing… (bypass temporarily off)",
+        "sb_score": "Score: {score}",
+        "sb_export": "Export",
+        "sb_import": "Import",
+        "sb_test_warn": "Bypass will be temporarily disabled during the test. Continue?",
+        "sb_saved": "Saved: {name}",
+        "sb_error": "Error: {error}",
+        "sb_restored": "bypass restored",
+        "sb_overwrite": "Strategy “{name}” already exists. Overwrite?",
+        "sb_no_custom": "no custom strategies",
+        "sb_exported": "Exported: {name}",
+        "sb_busy": "Busy — wait for the current operation to finish",
+        "osd_on": "Bypass ON",
+        "osd_off": "Bypass OFF",
+        "heal_fixed": "Issue fixed automatically",
+        "heal_help": "Could not restore bypass — help needed",
+        "tb_toggle": "Toggle",
+        "tb_tests": "Tests",
+        "tb_strategies": "Strategies"
     }
 }
 
@@ -831,6 +944,114 @@ def log_event(name, **fields):
         with open(EVENTS_PATH, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception: pass
+
+
+# ---------------------------------------------------------------
+# 17.5 «Иммунитет»: лестница самовосстановления и журнал инцидентов
+# ---------------------------------------------------------------
+
+INCIDENTS_PATH = os.path.join(APP_DATA_DIR, "incidents.jsonl")
+
+REPAIR_LADDER = {
+    "service_down": ("restart", "recreate", "repack", "notify"),
+    "degraded": ("rotate", "restart", "recreate", "repack", "notify"),
+}
+
+REPAIR_COOLDOWN_SEC = {
+    "rotate": 300.0,
+    "restart": 120.0,
+    "recreate": 600.0,
+    "repack": 1800.0,
+    "notify": 0.0,
+}
+
+
+def pick_rotation_target(current, favorite, strategies, scores=None):
+    """B4/17.5: стратегия для ротации — лучшая по тестам, затем избранная, затем следующая."""
+    strategies = [s for s in (strategies or []) if s]
+    if not strategies:
+        return current
+    scores = scores or {}
+    try:
+        ordered = sorted(range(len(strategies)),
+                         key=lambda i: (-float(scores.get(strategies[i], 0.0) or 0.0), i))
+    except Exception:
+        ordered = list(range(len(strategies)))
+    for index in ordered:
+        candidate = strategies[index]
+        if candidate != current and float(scores.get(candidate, 0.0) or 0.0) > 0.0:
+            return candidate
+    if favorite and favorite in strategies and favorite != current:
+        return favorite
+    if current in strategies and len(strategies) > 1:
+        return strategies[(strategies.index(current) + 1) % len(strategies)]
+    return current if current in strategies else strategies[0]
+
+
+def next_recovery_step(reason, attempts, history, now, max_repairs=6, window=1800.0):
+    """Следующий шаг самовосстановления по лестнице reason.
+
+    reason: "service_down" (служба упала) | "degraded" (пробы деградировали).
+    attempts: действия текущего инцидента (до сброса при здоровье).
+    history: журнал [{action, ts}] для кулдаунов и лимита попыток.
+    Возвращает имя действия или None (лестница исчерпана/лимит).
+    """
+    ladder = REPAIR_LADDER.get(reason)
+    if not ladder:
+        return None
+    attempted = set(attempts or [])
+    recent = [h for h in (history or [])
+              if h.get("action") != "notify" and now - float(h.get("ts", 0) or 0.0) <= window]
+    if len(recent) >= max_repairs:
+        return "notify" if "notify" not in attempted else None
+    for action in ladder:
+        if action in attempted:
+            continue
+        cooldown = REPAIR_COOLDOWN_SEC.get(action, 0.0)
+        if cooldown and any(h.get("action") == action
+                            and now - float(h.get("ts", 0) or 0.0) < cooldown
+                            for h in (history or [])):
+            continue
+        return action
+    return None
+
+
+def log_incident(action, result, level="warn", details=None):
+    """Запись инцидента самовосстановления: incidents.jsonl + events.jsonl."""
+    try:
+        ensure_app_data()
+        _rotate_log_file(INCIDENTS_PATH)
+        record = {
+            "ts": time.time(),
+            "time": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "level": level,
+            "action": action,
+            "result": result,
+        }
+        if details:
+            record["details"] = str(details)[:500]
+        with open(INCIDENTS_PATH, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception: pass
+    log_event("incident", action=action, result=result, level=level)
+
+
+def read_incidents(limit=50):
+    """Последние записи журнала инцидентов (для окна «Журнал»)."""
+    items = []
+    try:
+        if os.path.exists(INCIDENTS_PATH):
+            with open(INCIDENTS_PATH, encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+            for line in lines[-max(1, int(limit)):]:
+                try:
+                    record = json.loads(line)
+                    if isinstance(record, dict):
+                        items.append(record)
+                except Exception:
+                    continue
+    except Exception: pass
+    return items
 
 
 def build_issue_url(version, strategy=None, os_info=None, log_tail=None):
@@ -1924,6 +2145,60 @@ def launch_winws_direct(zapret_dir, bat_path):
         return False
 
 
+def run_custom_strategy_probe(zapret_dir, args_str, restore_bat_path=None, seconds=12.0, on_tick=None):
+    """17.5: проверить произвольные аргументы winws (конструктор стратегий).
+
+    Останавливает службу, запускает winws.exe напрямую с args_str, каждые ~2 c
+    пробы сервисов; затем останавливает winws и восстанавливает службу из
+    restore_bat_path (если она была включена). Возвращает score/результаты.
+    """
+    result = {"ok": False, "score": 0.0, "results": {}, "restored": None}
+    bin_path = os.path.join(zapret_dir, 'bin', 'winws.exe')
+    if not os.path.exists(bin_path) or not (args_str or "").strip():
+        return result
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = subprocess.SW_HIDE
+    was_on = winws_health_ok()
+    process = None
+    try:
+        stop_services_and_processes()
+        time.sleep(0.5)
+        argv = [bin_path] + split_windows_args(args_str)
+        process = subprocess.Popen(argv, cwd=zapret_dir, startupinfo=si,
+                                   creationflags=0x08000000, close_fds=True)
+        deadline = time.time() + max(4.0, float(seconds))
+        last_results = {}
+        while time.time() < deadline and process.poll() is None:
+            try:
+                last_results = probe_services(timeout=2.0)
+            except Exception:
+                last_results = {}
+            if on_tick:
+                try:
+                    on_tick(max(0.0, deadline - time.time()), last_results)
+                except Exception:
+                    pass
+            time.sleep(1.0)
+        result["results"] = last_results
+        result["score"] = round(score_probe_results(last_results), 3)
+        result["ok"] = process.poll() is None or result["score"] > 0.0
+    except Exception as e:
+        log_error(f"run_custom_strategy_probe error: {e}")
+    finally:
+        try:
+            if process is not None and process.poll() is None:
+                process.terminate()
+        except Exception:
+            pass
+        subprocess.call(["taskkill", "/F", "/IM", "winws.exe"], startupinfo=si, creationflags=0x08000000)
+        time.sleep(0.5)
+        if was_on and restore_bat_path and os.path.exists(restore_bat_path):
+            result["restored"] = install_zapret_service(zapret_dir, restore_bat_path)
+        log_event("probe_custom_strategy", score=result["score"], restored=result["restored"])
+    return result
+
+
 def stop_services_and_processes():
     """Останавливает службу zapret, WinDivert и процессы winws."""
     si = subprocess.STARTUPINFO()
@@ -1941,12 +2216,17 @@ def stop_services_and_processes():
         subprocess.call(["taskkill", "/F", "/IM", target], startupinfo=si, creationflags=cf)
 
 
+def is_strategy_bat(filename):
+    """Стратегия — любой .bat, кроме служебного service.bat (17.5: не фильтруем подстроку)."""
+    return (str(filename).lower().endswith(".bat")
+            and os.path.splitext(str(filename))[0].lower() != "service")
+
+
 def list_strategies(zapret_dir):
     """Список .bat-стратегий в каталоге данных."""
     try:
         if zapret_dir and os.path.isdir(zapret_dir):
-            return sorted(f for f in os.listdir(zapret_dir)
-                          if f.endswith('.bat') and 'service' not in f.lower())
+            return sorted(f for f in os.listdir(zapret_dir) if is_strategy_bat(f))
     except Exception as e:
         log_error(f"list_strategies error: {e}")
     return []
@@ -2224,6 +2504,21 @@ class ZapretLauncher(ctk.CTk):
         self.snow_enabled, self.minimal_mode, self.start_minimized, self.auto_repair = True, False, False, False
         self.autorun_enabled = True
         self.auto_restart = True       # Авто-перезапуск при падении службы
+        # 17.5: Windows-интеграция, OSD и «Иммунитет»
+        self.taskbar_ui = True         # Оверлей/кнопки/прогресс на панели задач
+        self.osd_enabled = True        # Всплывающее OSD при переключении обхода
+        self.self_heal = True          # Лестница самовосстановления (restart→recreate→repack)
+        self.auto_rotate = False       # Ротация стратегии при деградации доступности
+        self.taskbar = None
+        self._tb_last_status = None
+        self._tb_last_progress = None
+        self._repair_history = []
+        self._repair_attempts = []
+        self._repair_active = False
+        self._degrade_streak = 0
+        self._degrade_running = False
+        self._degrade_counter = 0
+        self._builder_probe_active = False
         self.desired_bypass = True     # Последнее состояние обхода (ON/OFF)
         self.proxy_enabled = False     # TgWsProxy: включать при старте
         self.notifications_enabled = True  # Уведомления в системном трее
@@ -2240,6 +2535,7 @@ class ZapretLauncher(ctk.CTk):
         self._stats_dirty = False
         self._stats_last_save = 0.0
         self._install_lock = threading.Lock()
+        self._repair_lock = threading.Lock()
         self._ui_queue = queue.Queue()
         self._tcp_timestamps_done = False
         self._last_render_error = 0.0
@@ -2322,6 +2618,7 @@ class ZapretLauncher(ctk.CTk):
         self.setup_tray()
         self.setup_hotkeys()
         self.after(50, self._pump_ui_queue)
+        self.after(1200, self._init_taskbar)
 
     def setup_tray(self):
         try:
@@ -2445,6 +2742,608 @@ class ZapretLauncher(ctk.CTk):
         finally:
             self.after(50, self._pump_ui_queue)
 
+    # ---------- 17.5: панель задач, OSD, самовосстановление ----------
+
+    def _init_taskbar(self):
+        if not self.taskbar_ui:
+            return
+        try:
+            if self.taskbar is None:
+                self.taskbar = win_taskbar.TaskbarIntegration(
+                    self.winfo_id(), icon_dir=os.path.join(APP_DATA_DIR, "taskbar_icons"),
+                    logger=log_error)
+                if self.taskbar.enabled:
+                    self.taskbar.register_button(1001, self._taskbar_toggle)
+                    self.taskbar.register_button(1002, self._taskbar_run_tests)
+                    self.taskbar.register_button(1003, self._taskbar_open_strategies)
+                    self.taskbar.add_buttons(self._taskbar_buttons())
+                    self._tb_last_status = None
+                    self._sync_taskbar()
+        except Exception as e:
+            log_error(f"_init_taskbar error: {e}")
+
+    def _apply_taskbar_setting(self):
+        if self.taskbar_ui:
+            self._init_taskbar()
+        elif self.taskbar is not None:
+            try:
+                self.taskbar.close()
+            except Exception:
+                pass
+            self.taskbar = None
+            self._tb_last_status = None
+            self._tb_last_progress = None
+
+    def _taskbar_buttons(self):
+        return [
+            (1001, self.get_text("tb_toggle"), "power"),
+            (1002, self.get_text("tb_tests"), "test"),
+            (1003, self.get_text("tb_strategies"), "list"),
+        ]
+
+    def _sync_taskbar(self):
+        """Статус/прогресс на панели задач (вызывается из render_loop)."""
+        taskbar = getattr(self, "taskbar", None)
+        if taskbar is None or not taskbar.enabled:
+            return
+        try:
+            if not taskbar.buttons_added and self.winfo_viewable():
+                now_ts = time.time()
+                if now_ts - getattr(self, "_tb_buttons_retry", 0.0) > 10.0:
+                    self._tb_buttons_retry = now_ts
+                    taskbar.add_buttons(self._taskbar_buttons())
+            if self.launcher_status != self._tb_last_status:
+                self._tb_last_status = self.launcher_status
+                taskbar.set_overlay(self.launcher_status)
+            progress = None
+            if self.is_updating and isinstance(self.update_state, str) and self.update_state.startswith("dl_"):
+                try:
+                    progress = (int(self.update_state[3:]), 100)
+                except Exception:
+                    progress = None
+            elif self.launcher_status == "TESTING" and getattr(self, "test_total", 0):
+                progress = (getattr(self, "test_progress", 0), self.test_total)
+            if progress != self._tb_last_progress:
+                self._tb_last_progress = progress
+                if progress is None:
+                    taskbar.set_progress(None)
+                else:
+                    taskbar.set_progress(progress[0], max(1, progress[1]))
+        except Exception:
+            pass
+
+    def _taskbar_toggle(self):
+        if self.launcher_status not in ("BUSY", "TESTING"):
+            threading.Thread(target=self.toggle_system, daemon=True).start()
+
+    def _taskbar_run_tests(self):
+        if self.launcher_status != "TESTING":
+            self.run_service_tests()
+
+    def _taskbar_open_strategies(self):
+        self.settings_open = True
+        self.mode_menu_open = True
+        self.menu_last_active = time.time()
+        self._refresh_bat_files()
+
+    def show_osd(self, text, color=None):
+        """Короткое всплывающее уведомление внизу справа (по настройке OSD)."""
+        if not self.osd_enabled or self.compact_mode:
+            return
+        try:
+            win = tk.Toplevel(self)
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.attributes("-alpha", 0.0)
+            width, height = 240, 64
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"{width}x{height}+{sw-width-24}+{sh-height-64}")
+            frame = tk.Frame(win, bg="#0e1124",
+                             highlightbackground=(color or self.theme_color), highlightthickness=2)
+            frame.pack(fill="both", expand=True)
+            tk.Label(frame, text=text, bg="#0e1124", fg="white",
+                     font=("Segoe UI", 11, "bold")).pack(expand=True)
+            steps = 8
+
+            def fade(step, direction):
+                try:
+                    alpha = step / steps if direction > 0 else 1.0 - step / steps
+                    win.attributes("-alpha", max(0.0, min(1.0, alpha)))
+                    if direction > 0 and step < steps:
+                        win.after(25, lambda: fade(step + 1, 1))
+                    elif direction > 0:
+                        win.after(1300, lambda: fade(1, -1))
+                    elif step < steps:
+                        win.after(25, lambda: fade(step + 1, -1))
+                    else:
+                        win.destroy()
+                except Exception:
+                    try:
+                        win.destroy()
+                    except Exception:
+                        pass
+
+            fade(1, 1)
+        except Exception as e:
+            log_error(f"show_osd error: {e}")
+
+    def _attempt_recovery(self, reason):
+        """Лестница самовосстановления (watchdog/монитор деградации); check-then-act под lock."""
+        try:
+            now = time.time()
+            action = next_recovery_step(reason, self._repair_attempts, self._repair_history, now)
+            if not action:
+                return
+            if action == "notify":
+                with self._repair_lock:
+                    if self._repair_active:
+                        return
+                    self._repair_attempts.append("notify")
+                log_incident("notify", "help_needed", level="error", details=reason)
+                self.ui_call(self._notify_help_needed)
+                return
+            with self._repair_lock:
+                if self._repair_active or getattr(self, "_builder_probe_active", False):
+                    return
+                self._repair_active = True
+                self._repair_attempts.append(action)
+                self._repair_history.append({"action": action, "ts": now})
+            log_event("recovery", action=action, reason=reason)
+            try:
+                threading.Thread(target=self._run_recovery_action, args=(action, reason),
+                                 daemon=True).start()
+            except Exception as e:
+                with self._repair_lock:
+                    self._repair_active = False
+                    if action in self._repair_attempts:
+                        self._repair_attempts.remove(action)
+                log_error(f"recovery thread start error: {e}")
+        except Exception as e:
+            with self._repair_lock:
+                self._repair_active = False
+            log_error(f"_attempt_recovery error: {e}")
+
+    def _ensure_active_bat(self):
+        """Закалка Immunity: активная стратегия существует в актуальном пакете, иначе — первая доступная."""
+        try:
+            self.zapret_dir = locate_zapret_dir()
+            self._refresh_bat_files()
+        except Exception as e:
+            log_error(f"_ensure_active_bat refresh error: {e}")
+        if not self.selected_bat or self.selected_bat not in self.bat_files:
+            self.selected_bat = self.bat_files[0] if self.bat_files else self.selected_bat
+            self.save_config()
+        if self.selected_bat:
+            return os.path.join(self.zapret_dir, self.selected_bat)
+        return ""
+
+    def _run_recovery_action(self, action, reason):
+        result = "failed"
+        try:
+            self.launcher_status = "BUSY"
+            self.status_text = self.get_text("status_busy")
+            bat_path = self._ensure_active_bat()
+            if action == "rotate":
+                target = pick_rotation_target(self.selected_bat, self.favorite_bat,
+                                              self.bat_files, getattr(self, "scores", {}) or {})
+                if target and target != self.selected_bat:
+                    self.selected_bat = target
+                    bat_path = os.path.join(self.zapret_dir, target)
+                    self.save_config()
+                    self.ui_call(self._refresh_bat_files)
+                    result = "ok" if install_zapret_service(self.zapret_dir, bat_path) else "failed"
+                else:
+                    result = "skipped"
+            elif action == "restart":
+                result = "ok" if install_zapret_service(self.zapret_dir, bat_path) else "failed"
+            elif action == "recreate":
+                stop_services_and_processes()
+                time.sleep(1)
+                result = "ok" if install_zapret_service(self.zapret_dir, bat_path) else "failed"
+            elif action == "repack":
+                stop_services_and_processes()
+                time.sleep(0.5)
+                repacked, _message = repack_payload()
+                bat_path = self._ensure_active_bat()
+                result = "ok" if (repacked and bat_path
+                                  and install_zapret_service(self.zapret_dir, bat_path)) else "failed"
+            if result == "ok" and winws_health_ok():
+                self.launcher_status, self.start_time = "ON", time.time()
+                self.status_text = self.get_text("status_on")
+                self.desired_bypass = True
+                self._repair_attempts = []
+                log_incident(action, "ok", level="info", details=reason)
+                self.ui_call(self.show_osd, self.get_text("heal_fixed"), "#22c55e")
+            elif result == "skipped":
+                log_incident(action, "skipped", level="warn", details=reason)
+            else:
+                result = "failed"
+                log_incident(action, "failed", level="warn", details=reason)
+        except Exception as e:
+            log_incident(action, "error", level="error", details=str(e))
+        finally:
+            if self.launcher_status == "BUSY" and self.desired_bypass:
+                self.launcher_status = "ON"
+                self.status_text = self.get_text("status_on")
+            with self._repair_lock:
+                self._repair_active = False
+            self._update_discord(force=True)
+
+    def _notify_help_needed(self):
+        self.launcher_status = "OFF"
+        self.status_text = self.get_text("status_error")
+        self._update_discord(force=True)
+        if self.notifications_enabled:
+            try:
+                self.tray_icon.notify(self.get_text("heal_help"), "Zapret Launcher")
+            except Exception:
+                pass
+        if self.taskbar is not None:
+            self.taskbar.flash_error()
+
+    def _degrade_check(self):
+        """Пробы при включённой авто-ротации: 3 подряд низких — ротация стратегии."""
+        try:
+            score = score_probe_results(probe_services(timeout=2.0))
+            if score < 0.5:
+                self._degrade_streak += 1
+                log_event("rotate_degraded", score=round(score, 3), streak=self._degrade_streak)
+                if self._degrade_streak >= 3:
+                    self._degrade_streak = 0
+                    self._attempt_recovery("degraded")
+            else:
+                self._degrade_streak = 0
+        except Exception as e:
+            log_error(f"_degrade_check error: {e}")
+        finally:
+            self._degrade_running = False
+
+    # ---------- 17.5: окна «Дополнительно», «Журнал», «Конструктор» ----------
+
+    def open_more_settings(self):
+        if getattr(self, "_more_win", None) is not None and self._more_win.winfo_exists():
+            self._more_win.lift()
+            return
+        self.play_sound("ON")
+        win = ctk.CTkToplevel(self)
+        self._more_win = win
+        win.title(self.get_text("more_title"))
+        win.geometry("380x340")
+        win.configure(fg_color="#0a0b1e")
+        win.transient(self)
+        ctk.CTkLabel(win, text=self.get_text("more_title"),
+                     font=("Segoe UI", 16, "bold")).pack(pady=(18, 12))
+
+        def add_switch(label_key, attr, command=None):
+            var = tk.BooleanVar(value=bool(getattr(self, attr)))
+
+            def on_toggle():
+                setattr(self, attr, bool(var.get()))
+                self.save_config()
+                self.play_sound("ON" if var.get() else "OFF")
+                if command:
+                    command()
+
+            ctk.CTkSwitch(win, text=self.get_text(label_key), variable=var, command=on_toggle,
+                          progress_color=self.theme_color, font=("Segoe UI", 12)).pack(anchor="w",
+                                                                                      padx=28, pady=7)
+
+        add_switch("taskbar_lbl", "taskbar_ui", self._apply_taskbar_setting)
+        add_switch("osd_lbl", "osd_enabled")
+        add_switch("self_heal_lbl", "self_heal")
+        add_switch("auto_rotate_lbl", "auto_rotate")
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(pady=16)
+        ctk.CTkButton(btns, text=self.get_text("inc_open"), command=self.open_incidents_window,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=150).pack(side="left", padx=6)
+        ctk.CTkButton(btns, text=self.get_text("builder_open"), command=self.open_builder_window,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=170).pack(side="left", padx=6)
+
+    def open_incidents_window(self):
+        if getattr(self, "_inc_win", None) is not None and self._inc_win.winfo_exists():
+            self._inc_win.lift()
+            self._refresh_incidents_view()
+            return
+        self.play_sound("ON")
+        win = ctk.CTkToplevel(self)
+        self._inc_win = win
+        win.title(self.get_text("inc_title"))
+        win.geometry("560x430")
+        win.configure(fg_color="#0a0b1e")
+        win.transient(self)
+        self._inc_text = ctk.CTkTextbox(win, fg_color="#0e1124", text_color="#d7d9e5",
+                                        font=("Consolas", 11))
+        self._inc_text.pack(fill="both", expand=True, padx=14, pady=(14, 8))
+        row = ctk.CTkFrame(win, fg_color="transparent")
+        row.pack(pady=(0, 12))
+        ctk.CTkButton(row, text=self.get_text("inc_refresh"), command=self._refresh_incidents_view,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=110).pack(side="left", padx=6)
+        ctk.CTkButton(row, text=self.get_text("inc_copy"), command=self._copy_incidents,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=110).pack(side="left", padx=6)
+        ctk.CTkButton(row, text=self.get_text("btn_close"), command=win.destroy,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=110).pack(side="left", padx=6)
+        self._refresh_incidents_view()
+
+    def _format_incidents(self):
+        items = read_incidents(60)
+        if not items:
+            return self.get_text("inc_empty")
+        lines = []
+        for item in reversed(items):
+            stamp = item.get("time") or time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.localtime(float(item.get("ts", 0) or 0)))
+            line = f"[{stamp}] {str(item.get('level', '?')).upper():5} {item.get('action', '?')} → {item.get('result', '')}"
+            if item.get("details"):
+                line += f"  ({item.get('details')})"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _refresh_incidents_view(self):
+        try:
+            self._inc_text.configure(state="normal")
+            self._inc_text.delete("1.0", "end")
+            self._inc_text.insert("1.0", self._format_incidents())
+            self._inc_text.configure(state="disabled")
+        except Exception as e:
+            log_error(f"_refresh_incidents_view error: {e}")
+
+    def _copy_incidents(self):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self._format_incidents())
+            self.play_sound("ON")
+        except Exception:
+            pass
+
+    def open_builder_window(self):
+        if getattr(self, "_builder_win", None) is not None and self._builder_win.winfo_exists():
+            self._builder_win.lift()
+            return
+        self.play_sound("ON")
+        self._refresh_bat_files()
+        win = ctk.CTkToplevel(self)
+        self._builder_win = win
+        win.title(self.get_text("builder_open"))
+        win.geometry("880x640")
+        win.configure(fg_color="#0a0b1e")
+        win.transient(self)
+        self._builder_segments = []
+        self._builder_widgets = []
+        self._builder_testing = False
+
+        top = ctk.CTkFrame(win, fg_color="transparent")
+        top.pack(fill="x", padx=14, pady=(12, 4))
+        ctk.CTkLabel(top, text=self.get_text("sb_base"), font=("Segoe UI", 12, "bold")).pack(side="left")
+        self._builder_base = ctk.StringVar(
+            value=self.selected_bat or (self.bat_files[0] if self.bat_files else ""))
+        ctk.CTkOptionMenu(top, values=self.bat_files or [""], variable=self._builder_base,
+                          fg_color="#15182e", button_color="#2a305e", width=280).pack(side="left", padx=10)
+        ctk.CTkButton(top, text=self.get_text("sb_load"), command=self._builder_load,
+                      fg_color="#1a3328", hover_color="#224433", width=110).pack(side="left", padx=6)
+        ctk.CTkButton(top, text=self.get_text("sb_import"), command=self._builder_import,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=90).pack(side="right", padx=4)
+
+        self._builder_body = ctk.CTkScrollableFrame(win, fg_color="#080914")
+        self._builder_body.pack(fill="both", expand=True, padx=14, pady=8)
+
+        bottom = ctk.CTkFrame(win, fg_color="transparent")
+        bottom.pack(fill="x", padx=14, pady=(4, 4))
+        ctk.CTkLabel(bottom, text=self.get_text("sb_name")).pack(side="left")
+        self._builder_name = ctk.CTkEntry(bottom, width=190, fg_color="#0e1124")
+        self._builder_name.pack(side="left", padx=8)
+        ctk.CTkButton(bottom, text=self.get_text("sb_test"), command=self._builder_test,
+                      fg_color="#3a2f10", hover_color="#4a3d16", width=130).pack(side="left", padx=6)
+        ctk.CTkButton(bottom, text=self.get_text("sb_save"), command=self._builder_save,
+                      fg_color="#1a3328", hover_color="#224433", width=160).pack(side="left", padx=6)
+        ctk.CTkButton(bottom, text=self.get_text("sb_export"), command=self._builder_export,
+                      fg_color="#15182e", hover_color="#1a1e3d", width=90).pack(side="left", padx=6)
+        self._builder_status = ctk.CTkLabel(win, text="", font=("Consolas", 11), text_color="#9aa0b5")
+        self._builder_status.pack(pady=(0, 8))
+
+        self._builder_load()
+
+    def _builder_set_status(self, text, color="#9aa0b5"):
+        try:
+            self._builder_status.configure(text=text, text_color=color)
+        except Exception:
+            pass
+
+    def _builder_load(self):
+        name = self._builder_base.get()
+        bat_path = os.path.join(self.zapret_dir, name)
+        if not os.path.exists(bat_path):
+            self._builder_set_status(self.get_text("status_no_file"), "#ef4444")
+            return
+        args = strategy_builder.load_strategy_args(bat_path, self.zapret_dir)
+        self._builder_segments = strategy_builder.parse_args(args)
+        if not self._builder_segments:
+            self._builder_set_status(self.get_text("status_error"), "#ef4444")
+            return
+        self._builder_name.set(strategy_builder.normalize_name(os.path.splitext(name)[0]))
+        self._builder_render()
+        self._builder_set_status("", "")
+
+    def _builder_render(self):
+        for child in self._builder_body.winfo_children():
+            child.destroy()
+        self._builder_widgets = []
+        for seg_index, segment in enumerate(self._builder_segments):
+            header = self.get_text("sb_global") if seg_index == 0 else f"{self.get_text('sb_profile')} {seg_index + 1}"
+            frame = ctk.CTkFrame(self._builder_body, fg_color="#0e1124")
+            frame.pack(fill="x", pady=4)
+            ctk.CTkLabel(frame, text=f"{header} · {segment.summary()}",
+                         font=("Segoe UI", 11, "bold"), anchor="w").pack(fill="x", padx=10, pady=(8, 2))
+            for opt_index, option in enumerate(segment.options):
+                row = ctk.CTkFrame(frame, fg_color="transparent")
+                row.pack(fill="x", padx=10, pady=1)
+                ctk.CTkLabel(row, text=option.flag, width=280, anchor="w",
+                             font=("Consolas", 10), text_color="#9aa0b5").pack(side="left")
+                entry = ctk.CTkEntry(row, fg_color="#15182e", font=("Consolas", 10))
+                if option.value is not None:
+                    entry.insert(0, option.value)
+                entry.pack(side="left", fill="x", expand=True, padx=6)
+                self._builder_widgets.append((seg_index, opt_index, entry))
+                ctk.CTkButton(row, text="✕", width=30, fg_color="#2a1520", hover_color="#3a1c2a",
+                              command=lambda s=seg_index, o=opt_index: self._builder_remove(s, o)).pack(side="left")
+            add_row = ctk.CTkFrame(frame, fg_color="transparent")
+            add_row.pack(fill="x", padx=10, pady=(2, 8))
+            used = {opt.flag.lower() for opt in segment.options}
+            flags = [flag for flag in strategy_builder.EDITABLE_ORDER
+                     if flag not in used or strategy_builder.KNOWN_FLAGS[flag].get("multi")]
+            pick = ctk.StringVar(value=flags[0] if flags else "")
+            ctk.CTkOptionMenu(add_row, values=flags or [""], variable=pick, width=280,
+                              fg_color="#15182e", button_color="#2a305e").pack(side="left")
+            ctk.CTkButton(add_row, text=self.get_text("sb_add"), width=90, fg_color="#15182e",
+                          hover_color="#1a1e3d",
+                          command=lambda s=seg_index, v=pick: self._builder_add(s, v.get())).pack(side="left", padx=6)
+
+    def _builder_collect(self):
+        try:
+            for seg_index, opt_index, entry in self._builder_widgets:
+                value = entry.get().strip()
+                self._builder_segments[seg_index].options[opt_index].value = value if value else None
+            return True
+        except Exception as e:
+            log_error(f"_builder_collect error: {e}")
+            return False
+
+    def _builder_args(self):
+        self._builder_collect()
+        return strategy_builder.serialize_args(self._builder_segments)
+
+    def _builder_add(self, seg_index, flag):
+        if not flag:
+            return
+        self._builder_collect()
+        self._builder_segments[seg_index].options.append(strategy_builder.Option(flag, "", True))
+        self._builder_render()
+
+    def _builder_remove(self, seg_index, opt_index):
+        self._builder_collect()
+        try:
+            del self._builder_segments[seg_index].options[opt_index]
+            self._builder_render()
+        except Exception:
+            pass
+
+    def _builder_save(self):
+        args = self._builder_args()
+        name = self._builder_name.get().strip()
+        normalized = strategy_builder.normalize_name(name)
+        bat_path = os.path.join(self.zapret_dir, strategy_builder.CUSTOM_PREFIX + normalized + ".bat")
+        overwrite = True
+        if os.path.exists(bat_path):
+            overwrite = messagebox.askyesno(self.get_text("builder_open"),
+                                            self.get_text("sb_overwrite").replace("{name}", normalized))
+        result = strategy_builder.save_custom_strategy(self.zapret_dir, name, args,
+                                                       title=name, overwrite=overwrite)
+        if result.get("ok"):
+            self._refresh_bat_files()
+            self._builder_set_status(
+                self.get_text("sb_saved").replace("{name}", result.get("bat", name)), "#22c55e")
+            self.play_sound("ON")
+        else:
+            self._builder_set_status(
+                self.get_text("sb_error").replace("{error}", str(result.get("error"))), "#ef4444")
+
+    def _builder_test(self):
+        if getattr(self, "_builder_testing", False):
+            return
+        if (self.launcher_status in ("TESTING", "BUSY") or getattr(self, "_repair_active", False)
+                or getattr(self, "test_is_running", False)):
+            self._builder_set_status(self.get_text("sb_busy"), "#eab308")
+            return
+        args = self._builder_args()
+        errors = strategy_builder.validate_args(args)
+        if errors:
+            self._builder_set_status(
+                self.get_text("sb_error").replace("{error}", str(errors[0].get("error"))), "#ef4444")
+            return
+        if not messagebox.askyesno(self.get_text("builder_open"), self.get_text("sb_test_warn")):
+            return
+        self._builder_testing = True
+        self._builder_set_status(self.get_text("sb_testing"), "#eab308")
+        restore = os.path.join(self.zapret_dir, self.selected_bat) if self.selected_bat else None
+        previous_status = self.launcher_status
+
+        def worker():
+            result = {"ok": False, "score": 0.0, "restored": None}
+            self._builder_probe_active = True
+            self.ui_call(self._set_probe_status, True)
+            try:
+                result = run_custom_strategy_probe(self.zapret_dir, args,
+                                                   restore_bat_path=restore, seconds=12.0)
+            except Exception as e:
+                log_error(f"builder probe error: {e}")
+            finally:
+                self._builder_probe_active = False
+                self.ui_call(self._set_probe_status, False, previous_status,
+                             bool(result.get("restored")))
+            try:
+                text = self.get_text("sb_score").replace("{score}", f"{result.get('score', 0.0):.0%}")
+                if result.get("restored"):
+                    text += " · " + self.get_text("sb_restored")
+                color = "#22c55e" if result.get("score", 0.0) >= 0.5 else "#ef4444"
+                self.ui_call(self._builder_set_status, text, color)
+            finally:
+                self._builder_testing = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_probe_status(self, active, previous_status=None, restored=False):
+        """На время проверки в конструкторе — TESTING (watchdog/ротация не вмешиваются)."""
+        if active:
+            self.launcher_status = "TESTING"
+            self.status_text = self.get_text("sb_testing")
+        elif previous_status == "ON":
+            healthy = bool(restored) or winws_health_ok()
+            self.launcher_status = "ON"
+            self.status_text = self.get_text("status_on" if healthy else "status_error")
+            if not healthy:
+                log_incident("probe_restore", "service_down", level="warn", details="builder probe")
+                threading.Thread(target=self._attempt_recovery, args=("service_down",),
+                                 daemon=True).start()
+        else:
+            self.launcher_status = previous_status or "OFF"
+            self.status_text = self.get_text("status_ready")
+        self._update_discord(force=True)
+
+    def _builder_export(self):
+        custom = strategy_builder.list_custom_strategies(self.zapret_dir)
+        if not custom:
+            self._builder_set_status(
+                self.get_text("sb_error").replace("{error}", self.get_text("sb_no_custom")), "#ef4444")
+            return
+        target_name = self._builder_name.get().strip()
+        chosen = next((item for item in custom
+                       if item["bat"].lower() == (strategy_builder.CUSTOM_PREFIX + target_name + ".bat").lower()),
+                      custom[0])
+        target = filedialog.asksaveasfilename(parent=self._builder_win, defaultextension=".zip",
+                                              filetypes=[("Zip", "*.zip")],
+                                              initialfile=os.path.splitext(chosen["bat"])[0] + ".zip")
+        if not target:
+            return
+        result = strategy_builder.export_custom_strategy(self.zapret_dir, chosen["bat"], target)
+        if result.get("ok"):
+            self._builder_set_status(self.get_text("sb_exported").replace("{name}", chosen["bat"]), "#22c55e")
+        else:
+            self._builder_set_status(
+                self.get_text("sb_error").replace("{error}", str(result.get("error"))), "#ef4444")
+
+    def _builder_import(self):
+        source = filedialog.askopenfilename(parent=self._builder_win, filetypes=[("Zip", "*.zip")])
+        if not source:
+            return
+        result = strategy_builder.import_custom_strategy(self.zapret_dir, source)
+        if result.get("ok"):
+            self._refresh_bat_files()
+            self._builder_set_status(
+                self.get_text("sb_saved").replace("{name}", result.get("bat", "")), "#22c55e")
+        else:
+            self._builder_set_status(
+                self.get_text("sb_error").replace("{error}", str(result.get("error"))), "#ef4444")
+
     def s(self, v): return v * self.ui_scale
     def fs(self, size): return max(8, int(size * self.ui_scale))
 
@@ -2460,7 +3359,7 @@ class ZapretLauncher(ctk.CTk):
         try:
             self.zapret_dir = locate_zapret_dir()
             if self.zapret_dir and os.path.exists(self.zapret_dir):
-                files = [f for f in os.listdir(self.zapret_dir) if f.endswith('.bat') and 'service' not in f.lower()]
+                files = [f for f in os.listdir(self.zapret_dir) if is_strategy_bat(f)]
                 if files:
                     files.sort()
                     self.bat_files = files
@@ -2502,10 +3401,26 @@ class ZapretLauncher(ctk.CTk):
                         self._total_uptime_sec += 5
                         self._stats_dirty = True
                         self._maybe_save_stats()
+                        if self._repair_attempts:
+                            self._repair_attempts = []
+                        if self.auto_rotate and not self._degrade_running:
+                            self._degrade_counter += 1
+                            if self._degrade_counter >= 12:
+                                self._degrade_counter = 0
+                                self._degrade_running = True
+                                try:
+                                    threading.Thread(target=self._degrade_check, daemon=True).start()
+                                except Exception as e:
+                                    self._degrade_running = False
+                                    log_error(f"degrade thread start error: {e}")
                     else:
                         fail_streak += 1
                         if fail_streak < 2:
                             log_error(f"Watchdog: winws.exe не найден (проверка {fail_streak}/2)")
+                        elif self.self_heal:
+                            log_error(f"Watchdog: служба упала (SCM={service_state('zapret')}), самовосстановление")
+                            self._attempt_recovery("service_down")
+                            fail_streak = 0
                         else:
                             log_error(f"Watchdog: служба упала (SCM={service_state('zapret')})")
                             if getattr(self, 'auto_restart', False):
@@ -2737,6 +3652,10 @@ class ZapretLauncher(ctk.CTk):
                     self.start_minimized = data.get("minimized", False)
                     self.auto_repair = data.get("repair", False)
                     self.auto_restart = data.get("auto_restart", True)
+                    self.taskbar_ui = bool(data.get("taskbar_ui", True))
+                    self.osd_enabled = bool(data.get("osd", True))
+                    self.self_heal = bool(data.get("self_heal", True))
+                    self.auto_rotate = bool(data.get("auto_rotate", False))
                     self.desired_bypass = data.get("desired_bypass", True)
                     self.proxy_enabled = data.get("proxy_enabled", False)
                     self.notifications_enabled = data.get("notifications", True)
@@ -2800,6 +3719,10 @@ class ZapretLauncher(ctk.CTk):
                 "minimized": self.start_minimized,
                 "repair": self.auto_repair,
                 "auto_restart": self.auto_restart,
+                "taskbar_ui": self.taskbar_ui,
+                "osd": self.osd_enabled,
+                "self_heal": self.self_heal,
+                "auto_rotate": self.auto_rotate,
                 "desired_bypass": self.desired_bypass,
                 "proxy_enabled": self.proxy_enabled,
                 "notifications": self.notifications_enabled,
@@ -3222,6 +4145,11 @@ class ZapretLauncher(ctk.CTk):
                     self.play_sound("ON" if self.discord_rpc else "OFF")
                     return
 
+                # 17.5: дополнительные настройки (Y=708..736)
+                if mx+s(20) <= event.x <= mx+s(240) and s(708) <= event.y <= s(736):
+                    self.open_more_settings()
+                    return
+
                 # Звездочка избранного
                 if math.sqrt((event.x-(mx+s(190)))**2+(event.y-s(642))) < s(15):
                      if self.selected_bat:
@@ -3259,8 +4187,11 @@ class ZapretLauncher(ctk.CTk):
 
     def toggle_system(self):
         old = self.launcher_status
-        if old == "TESTING": return 
-        
+        if old == "TESTING": return
+        if (getattr(self, "_repair_active", False) or getattr(self, "_builder_probe_active", False)
+                or old == "BUSY"):
+            return
+
         self.status_text = self.get_text("status_busy") if old != "BUSY" else "..."
         self.launcher_status = "BUSY"
         self._update_discord(force=True)
@@ -3301,7 +4232,7 @@ class ZapretLauncher(ctk.CTk):
 
         bat_path = os.path.join(self.zapret_dir, self.selected_bat)
         if not os.path.exists(bat_path):
-            bats = [f for f in os.listdir(self.zapret_dir) if f.endswith('.bat') and 'service' not in f.lower()]
+            bats = [f for f in os.listdir(self.zapret_dir) if is_strategy_bat(f)]
             if bats:
                 self.selected_bat = bats[0]
                 bat_path = os.path.join(self.zapret_dir, self.selected_bat)
@@ -3320,6 +4251,8 @@ class ZapretLauncher(ctk.CTk):
                 self._save_stats()
                 self.save_config()
                 self.play_sound("ON")
+                self.ui_call(self.show_osd, f"{self.get_text('osd_on')}: {self.selected_bat.replace('.bat', '')}",
+                             "#22c55e")
                 if self.notifications_enabled:
                     try: self.tray_icon.notify("Обход включён", "Zapret Launcher")
                     except Exception: pass
@@ -3338,6 +4271,7 @@ class ZapretLauncher(ctk.CTk):
         self.desired_bypass = False
         self.save_config()
         self.play_sound("OFF")
+        self.ui_call(self.show_osd, self.get_text("osd_off"), "#ef4444")
         if self.notifications_enabled:
             try: self.tray_icon.notify("Обход выключен", "Zapret Launcher")
             except Exception: pass
@@ -3412,6 +4346,7 @@ class ZapretLauncher(ctk.CTk):
 
     def render_loop(self):
         self._render_delay = RENDER_FRAME_MS
+        self._sync_taskbar()
         try:
             if self.discord is not None and time.time() - self._discord_ts >= 15.0:
                 self._discord_ts = time.time()
@@ -3746,6 +4681,15 @@ class ZapretLauncher(ctk.CTk):
                                         fill="white" if (self.discord_rpc or hvr_dsc) else "#5a6591",
                                         font=("Segoe UI", fs(9), "bold"))
 
+                # 17.5: дополнительные настройки (Y=708..736)
+                hvr_more = (mx_menu+s(20) <= self.mouse_x <= mx_menu+s(240) and s(708) <= self.mouse_y <= s(736))
+                self.rounded_rect(mx_menu+s(20), s(708), mx_menu+s(240), s(736), r=s(5),
+                                  fill_col="#15182e" if hvr_more else "#0e1124",
+                                  outline_col=active_color if hvr_more else "#2a305e")
+                self.canvas.create_text(mx_menu+s(130), s(722), text=self.get_text("more_settings"),
+                                        fill="white" if hvr_more else "#5a6591",
+                                        font=("Segoe UI", fs(8), "bold"))
+
                 if self.mode_menu_anim > 0.01:
                     actual_files = self.bat_files
                     v_cnt = min(len(actual_files), 16)
@@ -3975,6 +4919,10 @@ if __name__ == "__main__":
             def on_closing():
                 app_launcher.withdraw()
                 try: app_launcher._save_stats()
+                except Exception: pass
+                try:
+                    if app_launcher.taskbar is not None:
+                        app_launcher.taskbar.close()
                 except Exception: pass
                 app_launcher.stop_process_logic()
                 app_launcher.destroy()

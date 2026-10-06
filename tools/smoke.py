@@ -404,17 +404,17 @@ def main():
           and "WizardSizePercent=" in iss and "WizardBackImageFile=wizard_back.bmp" in iss)
     check("installer custom UI", "CreateCustomPage" in iss and "TWizardPage" in iss
           and "SetTimer" in iss and "CurInstallProgressChanged" in iss
-          and "ShouldSkipPage" in iss and "anim_00.bmp" in iss)
-    frames_dir = os.path.join(ROOT, "installer", "frames")
+          and "ShouldSkipPage" in iss and "banner.bmp" in iss)
     check("installer wow assets", os.path.exists(os.path.join(ROOT, "installer", "wizard_back.bmp"))
-          and os.path.exists(os.path.join(ROOT, "installer", "sound_intro.wav"))
-          and os.path.exists(os.path.join(ROOT, "installer", "sound_done.wav"))
+          and os.path.exists(os.path.join(ROOT, "installer", "banner.bmp"))
           and os.path.exists(os.path.join(ROOT, "installer", "progress_track.bmp"))
           and os.path.exists(os.path.join(ROOT, "installer", "progress_fill.bmp"))
           and os.path.exists(os.path.join(ROOT, "installer", "finish_banner.bmp"))
-          and os.path.isdir(frames_dir) and len(os.listdir(frames_dir)) == 16)
-    check("installer wow code", "WizardBackImageFile=wizard_back.bmp" in iss and "mciSendString" in iss
-          and "SoundCaption" in iss and "VersionInfoProductVersion" in iss)
+          and not os.path.isdir(os.path.join(ROOT, "installer", "frames"))
+          and not os.path.exists(os.path.join(ROOT, "installer", "sound_intro.wav")))
+    check("installer wow code", "WizardBackImageFile=wizard_back.bmp" in iss
+          and "CLOSE_SECONDS" in iss and "CloseTick" in iss and "BM_CLICK" in iss
+          and "VersionInfoProductVersion" in iss)
     check("installer sandbox tool", os.path.exists(os.path.join(ROOT, "tools", "installer_sandbox_test.py")))
     check("install-mode helpers", all(hasattr(app, f) for f in
           ("record_install_mode", "recorded_install_mode", "installed_components"))
@@ -427,6 +427,41 @@ def main():
           and hasattr(app, "build_issue_url")
           and app.build_issue_url("1.0").startswith("https://github.com/Aikiovade/ZapretLauncher/issues/new?"))
     check("service recovery policy", '"sc", "failure"' in src)
+
+    # 6p. 17.5: конструктор стратегий, иммунитет, Windows-интеграция панели задач
+    import strategy_builder as sb
+    import win_taskbar as wtb
+    check("strategy builder module", all(hasattr(sb, f) for f in
+          ("parse_args", "serialize_args", "validate_args", "validate_name", "build_bat_content",
+           "extract_winws_args", "save_custom_strategy", "export_custom_strategy",
+           "import_custom_strategy", "list_custom_strategies")))
+    roundtrip = sb.serialize_args(sb.parse_args("--wf-tcp=80 --dpi-desync=fake --new --filter-tcp=443"))
+    check("strategy builder roundtrip", roundtrip == "--wf-tcp=80 --dpi-desync=fake --new --filter-tcp=443")
+    check("strategy builder validation", sb.validate_args("--wf-tcp=80,443 --dpi-desync=fake") == []
+          and [e["error"] for e in sb.validate_args("--dpi-desync=hack")] == ["bad_choice"]
+          and sb.validate_args("--custom=bad|value") != []
+          and sb.validate_name("my strategy") is None and sb.validate_name("bad/name") == "bad_chars")
+    check("recovery helpers", all(hasattr(app, f) for f in
+          ("pick_rotation_target", "next_recovery_step", "log_incident", "read_incidents"))
+          and app.next_recovery_step("degraded", [], [], 1000.0) == "rotate"
+          and app.pick_rotation_target("a.bat", None, ["a.bat", "b.bat"], {}) == "b.bat")
+    taskbar = wtb.TaskbarIntegration(None)
+    check("taskbar no-op safety", taskbar.enabled is False and taskbar.set_overlay("ON") is False
+          and taskbar.set_progress(1, 2) is False and taskbar.flash_error() is False)
+    taskbar.close()
+    check("17.5 tk integration", all(name in src for name in
+          ("def _init_taskbar", "def _sync_taskbar", "def _attempt_recovery", "def _run_recovery_action",
+           "def _degrade_check", "def show_osd", "def open_more_settings", "def open_incidents_window",
+           "def open_builder_window", "def _builder_load", "def _builder_save", "def _builder_test",
+           "def run_custom_strategy_probe", "def repack_payload")))
+    check("17.5 config keys", all(f'"{key}"' in src for key in
+          ("taskbar_ui", "osd", "self_heal", "auto_rotate")))
+    new_keys = ("more_settings", "taskbar_lbl", "osd_lbl", "self_heal_lbl", "inc_title", "inc_copy",
+                "builder_open", "sb_base", "sb_test", "sb_save", "osd_on", "osd_off", "heal_fixed",
+                "tb_toggle", "tb_tests", "tb_strategies")
+    check("17.5 i18n keys", all(key in app.TRANSLATIONS_DATA["RU"] and key in app.TRANSLATIONS_DATA["EN"]
+                                for key in new_keys))
+    check("custom probe no-op", app.run_custom_strategy_probe("", "")["ok"] is False)
 
     # 6o. A3/F6/H1: CLI, единый changelog, pytest-набор
     cli = os.path.join(ROOT, "zapret_cli.py")

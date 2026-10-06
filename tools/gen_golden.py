@@ -18,6 +18,11 @@ import zapret_new_win as core  # noqa: E402
 GOLDEN_DIR = os.path.join(ROOT, "tests", "golden")
 
 
+def normalize_paths(text, pkg):
+    """Абсолютные пути пакета -> <PKG>, чтобы golden был переносимым (CI/другая машина)."""
+    return text.replace(pkg + "\\", "<PKG>\\").replace(pkg + "/", "<PKG>/")
+
+
 def main():
     pkg = os.path.join(ROOT, "zapret_data", core.FOLDER_NAME)
     if not os.path.isdir(pkg):
@@ -27,9 +32,9 @@ def main():
     for bat in core.list_strategies(pkg):
         args = core.parse_strategy_bat(os.path.join(pkg, bat), pkg)
         if not args:
-            print(f"Не разобрана стратегия: {bat}")
+            print(f"Не разобралась стратегия: {bat}")
             return 1
-        golden[bat] = args
+        golden[bat] = normalize_paths(args, pkg)
     os.makedirs(GOLDEN_DIR, exist_ok=True)
     out = os.path.join(GOLDEN_DIR, f"{core.FOLDER_NAME}.json")
     with open(out, "w", encoding="utf-8") as f:

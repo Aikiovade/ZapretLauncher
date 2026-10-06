@@ -6,6 +6,7 @@
   installer/wizard_small.bmp   (110x110)
   installer/wizard_back.bmp    (800x600 — фон окна мастера, используется с opacity)
 """
+import json
 import math
 import os
 import sys
@@ -14,6 +15,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, "installer")
+
+
+def app_version():
+    try:
+        with open(os.path.join(ROOT, "update_info.json"), encoding="utf-8") as f:
+            return "v" + str(json.load(f).get("version", "dev"))
+    except Exception:
+        return "vdev"
 BG_TOP = (10, 11, 30)
 BG_BOTTOM = (16, 19, 46)
 ACCENT = (0, 255, 136)
@@ -84,7 +93,7 @@ def make_wizard_image(path):
     _centered(draw, w, 378, "L A U N C H E R", _font(20), ACCENT)
     _centered(draw, w, 418, "DPI bypass · Windows", _font(15, bold=False), MUTED)
 
-    badge = "v17.4"
+    badge = app_version()
     bf = _font(16)
     bbox = draw.textbbox((0, 0), badge, font=bf)
     bw = bbox[2] - bbox[0] + 28
@@ -131,38 +140,30 @@ def make_wizard_back(path):
     return path
 
 
-FRAME_COUNT = 16
-BANNER_W, BANNER_H = 640, 150
+BANNER_W, BANNER_H = 900, 150
 
 
-def make_anim_frames(out_dir):
-    """Кадры анимированного баннера: пульсирующие кольца + орбитальные точки + логотип."""
+def make_banner(out_dir):
+    """Статичный баннер (без анимации): кольца + орбитальные точки + логотип."""
     os.makedirs(out_dir, exist_ok=True)
-    paths = []
     cx, cy = BANNER_W // 2, 54
-    for idx in range(FRAME_COUNT):
-        t = idx / FRAME_COUNT
-        img = Image.new("RGB", (BANNER_W, BANNER_H), BG_TOP)
-        _vgradient(img, (8, 9, 24), (16, 19, 46))
-        img = img.convert("RGBA")
-        img = Image.alpha_composite(img, _glow((BANNER_W, BANNER_H), (cx, cy), 90, ACCENT, 70))
-        draw = ImageDraw.Draw(img)
-        for i in range(3):
-            phase = (t + i / 3.0) % 1.0
-            r = 26 + phase * 74
-            color = tuple(int(BG_TOP[j] + (ACCENT[j] - BG_TOP[j]) * max(0.0, 1.0 - phase)) for j in range(3))
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=2)
-        r0 = 24 + 4 * math.sin(t * 2 * math.pi)
-        draw.ellipse([cx - r0, cy - r0, cx + r0, cy + r0], outline=ACCENT, width=3)
-        draw.line([cx, cy - 10, cx, cy + 10], fill=ACCENT, width=4)
-        for k in range(6):
-            ang = (k / 6.0) * 2 * math.pi + t * 2 * math.pi
-            px, py = cx + math.cos(ang) * 46, cy + math.sin(ang) * 46
-            draw.ellipse([px - 3, py - 3, px + 3, py + 3], fill=ACCENT_DIM)
-        path = os.path.join(out_dir, f"anim_{idx:02d}.bmp")
-        img.convert("RGB").save(path, "BMP")
-        paths.append(path)
-    return paths
+    img = Image.new("RGB", (BANNER_W, BANNER_H), BG_TOP)
+    _vgradient(img, (8, 9, 24), (16, 19, 46))
+    img = img.convert("RGBA")
+    img = Image.alpha_composite(img, _glow((BANNER_W, BANNER_H), (cx, cy), 110, ACCENT, 70))
+    draw = ImageDraw.Draw(img)
+    for r, width, fade in ((78, 2, 0.25), (54, 2, 0.45), (34, 3, 0.85)):
+        color = tuple(int(BG_TOP[j] + (ACCENT[j] - BG_TOP[j]) * fade) for j in range(3))
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=width)
+    draw.ellipse([cx - 24, cy - 24, cx + 24, cy + 24], outline=ACCENT, width=3)
+    draw.line([cx, cy - 10, cx, cy + 10], fill=ACCENT, width=4)
+    for k in range(6):
+        ang = (k / 6.0) * 2 * math.pi
+        px, py = cx + math.cos(ang) * 46, cy + math.sin(ang) * 46
+        draw.ellipse([px - 3, py - 3, px + 3, py + 3], fill=ACCENT_DIM)
+    path = os.path.join(out_dir, "banner.bmp")
+    img.convert("RGB").save(path, "BMP")
+    return path
 
 
 def make_ui_images(out_dir):
@@ -195,8 +196,7 @@ def main():
     print("OK:", make_wizard_image(os.path.join(OUT_DIR, "wizard_image.bmp")))
     print("OK:", make_wizard_small(os.path.join(OUT_DIR, "wizard_small.bmp")))
     print("OK:", make_wizard_back(os.path.join(OUT_DIR, "wizard_back.bmp")))
-    frames = make_anim_frames(os.path.join(OUT_DIR, "frames"))
-    print(f"OK: {len(frames)} animation frames -> installer/frames/")
+    print("OK:", make_banner(OUT_DIR))
     make_ui_images(OUT_DIR)
     print("OK: progress_track/fill + finish_banner")
     return 0

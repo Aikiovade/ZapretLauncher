@@ -10,7 +10,7 @@
 ; (SetTimer + кадры), свой прогресс-бар, тёмный стиль, звуки.
 
 #define AppName "ZapretLauncher"
-#define AppVersion "17.4"
+#define AppVersion "17.5"
 #define AppPublisher "Aikiovade"
 #define AppURL "https://github.com/Aikiovade/ZapretLauncher"
 
@@ -54,8 +54,6 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
-russian.SoundCaption=Звуковое сопровождение установки
-english.SoundCaption=Installer sound effects
 russian.IntroSub=Установка лаунчера обхода блокировок
 english.IntroSub=DPI bypass launcher installation
 russian.Feat1=• Обход YouTube и Discord (служба zapret, движок winws)
@@ -66,12 +64,12 @@ russian.Feat3=• Авто-подбор стратегии, мониторинг
 english.Feat3=• Auto strategy pick, service monitoring, network profiles
 russian.Feat4=• Автообновление, portable-режим, Discord Rich Presence
 english.Feat4=• Auto-update, portable mode, Discord Rich Presence
-russian.InfoLine=Установка в Program Files · ярлык на рабочем столе · служба обхода ставится автоматически
-english.InfoLine=Installs to Program Files · desktop shortcut · bypass service is set up automatically
+russian.InfoLine=Установка в Program Files · ярлыки и служба обхода создаются автоматически
+english.InfoLine=Installs to Program Files · shortcuts and the bypass service are created automatically
 russian.FinishTitle=ВСЁ ГОТОВО!
 english.FinishTitle=ALL DONE!
-russian.FinishText={#AppName} {#AppVersion} установлен. Включайте обход большой кнопкой или хоткеем Ctrl+Shift+Z.
-english.FinishText={#AppName} {#AppVersion} is installed. Enable the bypass with the big button or Ctrl+Shift+Z.
+russian.FinishText=Обход включается большой кнопкой или хоткеем Ctrl+Shift+Z.
+english.FinishText=Toggle the bypass with the big button or Ctrl+Shift+Z.
 russian.BtnInstall=УСТАНОВИТЬ
 english.BtnInstall=INSTALL
 russian.BtnCancel=Отмена
@@ -91,12 +89,10 @@ Type: files; Name: "{app}\ZapretWeb.exe"
 [Files]
 Source: "..\dist\Zapret.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\tools\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "frames\anim_*.bmp"; Flags: dontcopy
+Source: "banner.bmp"; Flags: dontcopy
 Source: "progress_track.bmp"; Flags: dontcopy
 Source: "progress_fill.bmp"; Flags: dontcopy
 Source: "finish_banner.bmp"; Flags: dontcopy
-Source: "sound_intro.wav"; Flags: dontcopy
-Source: "sound_done.wav"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\Zapret.exe"
@@ -116,8 +112,8 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 
 [Code]
 const
-  FRAME_COUNT = 16;
-  FRAME_MS = 120;
+  CLOSE_SECONDS = 5;
+  BM_CLICK = $00F5;
 
 var
   IntroPage: TWizardPage;
@@ -129,8 +125,6 @@ var
   Feat3: TNewStaticText;
   Feat4: TNewStaticText;
   InfoLine: TNewStaticText;
-  SoundCheck: TNewCheckBox;
-  SoundEnabled: Boolean;
 
   InstallBanner: TBitmapImage;
   ProgressTrack: TBitmapImage;
@@ -141,36 +135,33 @@ var
   FinishTitle: TNewStaticText;
   FinishText: TNewStaticText;
 
-  FrameIdx: Integer;
-  AnimTimer: UINT;
-  ContentLeft, ContentWidth: Integer;
+  CloseCountdown: Integer;
+  CloseTimer: UINT;
+  IntroLeft, IntroWidth: Integer;
+  FinishLeft, FinishWidth: Integer;
 
-function mciSendString(lpszCommand: String; lpszReturnString: String; uReturnLen: Integer;
-  hwndCallback: Integer): Integer; external 'mciSendStringW@winmm.dll stdcall';
 function SetTimer(hWnd: HWND; nIDEvent: UINT; uElapse: UINT; uTimerFunc: LongWord): UINT;
   external 'SetTimer@user32.dll stdcall';
 function KillTimer(hWnd: HWND; uIDEvent: UINT): BOOL; external 'KillTimer@user32.dll stdcall';
+function SetFocus(hWnd: HWND): HWND; external 'SetFocus@user32.dll stdcall';
+function SendMessage(hWnd: HWND; Msg: UINT; wParam: Longint; lParam: Longint): Longint;
+  external 'SendMessageW@user32.dll stdcall';
 
-procedure PlaySoundFile(FileName: String; Alias: String);
+{ Финальная страница закрывается сама через CLOSE_SECONDS секунд (как нажатие «ЗАКРЫТЬ») }
+procedure CloseTick(hwnd: HWND; uMsg: UINT; idEvent: UINT; dwTime: DWORD);
 begin
-  if WizardSilent or (not SoundEnabled) then
-    exit;
-  try
-    ExtractTemporaryFile(FileName);
-  except
-  end;
-  mciSendString('close ' + Alias, '', 0, 0);
-  mciSendString('open "' + ExpandConstant('{tmp}\') + FileName + '" type waveaudio alias ' + Alias, '', 0, 0);
-  mciSendString('play ' + Alias, '', 0, 0);
-end;
-
-procedure SoundCheckClick(Sender: TObject);
-begin
-  SoundEnabled := SoundCheck.Checked;
-  if SoundEnabled then
-    PlaySoundFile('sound_intro.wav', 'zlaunch_intro')
+  CloseCountdown := CloseCountdown - 1;
+  if CloseCountdown <= 0 then
+  begin
+    if CloseTimer <> 0 then
+    begin
+      KillTimer(0, CloseTimer);
+      CloseTimer := 0;
+    end;
+    SendMessage(WizardForm.NextButton.Handle, BM_CLICK, 0, 0);
+  end
   else
-    mciSendString('close zlaunch_intro', '', 0, 0);
+    WizardForm.NextButton.Caption := ExpandConstant('{cm:BtnClose}') + ' (' + IntToStr(CloseCountdown) + ')';
 end;
 
 function AddLabel(Parent: TWinControl; Left, Top, Width: Integer; Caption: String;
@@ -181,7 +172,8 @@ begin
   Result.Left := Left;
   Result.Top := Top;
   Result.Width := Width;
-  Result.AutoSize := False;
+  { AutoSize: иначе высота остаётся дефолтной и крупные шрифты обрезаются }
+  Result.AutoSize := True;
   Result.Caption := Caption;
   Result.Font.Name := 'Segoe UI';
   Result.Font.Size := Size;
@@ -202,39 +194,78 @@ begin
   Result.Bitmap.LoadFromFile(ExpandConstant('{tmp}\') + FileName);
 end;
 
-function FrameName(Idx: Integer): String;
+{ Баннер по центру доступной ширины с сохранением пропорций картинки }
+function AddBanner(Parent: TWinControl; Left, Top, MaxWidth, MaxHeight: Integer;
+  FileName: String): TBitmapImage;
+var
+  bmpW, bmpH, w, h: Integer;
 begin
-  Result := 'anim_';
-  if Idx < 10 then
-    Result := Result + '0';
-  Result := Result + IntToStr(Idx) + '.bmp';
+  Result := TBitmapImage.Create(Parent);
+  Result.Parent := Parent;
+  Result.Stretch := True;
+  Result.Bitmap.LoadFromFile(ExpandConstant('{tmp}\') + FileName);
+  bmpW := Result.Bitmap.Width;
+  bmpH := Result.Bitmap.Height;
+  if (bmpW <= 0) or (bmpH <= 0) then
+  begin
+    w := MaxWidth;
+    h := MaxHeight;
+  end
+  else
+  begin
+    w := MaxWidth;
+    h := (MaxWidth * bmpH) div bmpW;
+    if h > MaxHeight then
+    begin
+      h := MaxHeight;
+      w := (MaxHeight * bmpW) div bmpH;
+    end;
+  end;
+  Result.Left := Left + (MaxWidth - w) div 2;
+  Result.Top := Top;
+  Result.Width := w;
+  Result.Height := h;
 end;
 
-procedure LoadFrame(Img: TBitmapImage; Idx: Integer);
+{ Кастомные страницы (вступление/установка) большую картинку мастера НЕ показывают —
+  им нужна полная ширина; финальная страница картинку показывает — резервируем её. }
+procedure ComputeLayout();
 begin
-  if Img = nil then
-    exit;
-  Img.Bitmap.LoadFromFile(ExpandConstant('{tmp}\') + FrameName(Idx));
-end;
+  IntroLeft := ScaleX(18);
+  IntroWidth := WizardForm.ClientWidth - ScaleX(36);
 
-procedure AnimTick(hwnd: HWND; uMsg: UINT; idEvent: UINT; dwTime: DWORD);
-begin
-  FrameIdx := (FrameIdx + 1) mod FRAME_COUNT;
-  LoadFrame(IntroBanner, FrameIdx);
-  LoadFrame(InstallBanner, FrameIdx);
+  if WizardForm.WizardBitmapImage.Visible then
+  begin
+    if WizardForm.WizardBitmapImage.Left < (WizardForm.ClientWidth div 2) then
+    begin
+      FinishLeft := WizardForm.WizardBitmapImage.Left + WizardForm.WizardBitmapImage.Width + ScaleX(18);
+      FinishWidth := WizardForm.ClientWidth - FinishLeft - ScaleX(18);
+    end
+    else
+    begin
+      FinishLeft := ScaleX(18);
+      FinishWidth := WizardForm.WizardBitmapImage.Left - FinishLeft - ScaleX(18);
+    end;
+  end
+  else
+  begin
+    FinishLeft := ScaleX(18);
+    FinishWidth := WizardForm.ClientWidth - ScaleX(36);
+  end;
+
+  if FinishWidth < ScaleX(260) then
+  begin
+    FinishLeft := ScaleX(18);
+    FinishWidth := WizardForm.ClientWidth - ScaleX(36);
+  end;
 end;
 
 procedure ExtractAssets();
-var
-  i: Integer;
 begin
-  for i := 0 to FRAME_COUNT - 1 do
-    ExtractTemporaryFile(FrameName(i));
+  ExtractTemporaryFile('banner.bmp');
   ExtractTemporaryFile('progress_track.bmp');
   ExtractTemporaryFile('progress_fill.bmp');
   ExtractTemporaryFile('finish_banner.bmp');
-  ExtractTemporaryFile('sound_intro.wav');
-  ExtractTemporaryFile('sound_done.wav');
 end;
 
 procedure InitializeWizard();
@@ -242,91 +273,62 @@ var
   y: Integer;
 begin
   ExtractAssets();
-  SoundEnabled := True;
-
-  { область контента: с учётом позиции большой картинки мастера (слева/справа/скрыта) }
-  if not WizardForm.WizardBitmapImage.Visible then
-  begin
-    ContentLeft := ScaleX(18);
-    ContentWidth := WizardForm.ClientWidth - ScaleX(34);
-  end
-  else if WizardForm.WizardBitmapImage.Left < (WizardForm.ClientWidth div 2) then
-  begin
-    ContentLeft := WizardForm.WizardBitmapImage.Left + WizardForm.WizardBitmapImage.Width + ScaleX(16);
-    ContentWidth := WizardForm.ClientWidth - ContentLeft - ScaleX(16);
-  end
-  else
-  begin
-    ContentLeft := ScaleX(18);
-    ContentWidth := WizardForm.WizardBitmapImage.Left - ContentLeft - ScaleX(16);
-  end;
-  if ContentWidth < ScaleX(300) then
-  begin
-    ContentLeft := ScaleX(18);
-    ContentWidth := WizardForm.ClientWidth - ScaleX(34);
-  end;
+  ComputeLayout();
 
   { прячем стандартную шапку Inno }
   WizardForm.PageNameLabel.Visible := False;
   WizardForm.PageDescriptionLabel.Visible := False;
   WizardForm.Bevel.Visible := False;
 
-  { --- страница 1: вступление --- }
+  { --- страница 1: вступление (статичный баннер, без звука) --- }
   IntroPage := CreateCustomPage(wpWelcome, '', '');
-  IntroBanner := AddImage(IntroPage.Surface, ContentLeft, ScaleY(8), ContentWidth, ScaleY(96), 'anim_00.bmp');
-  IntroTitle := AddLabel(IntroPage.Surface, ContentLeft, IntroBanner.Top + IntroBanner.Height + ScaleY(6),
-    ContentWidth, 'ZAPRET LAUNCHER', 16, True);
-  IntroSub := AddLabel(IntroPage.Surface, ContentLeft, IntroTitle.Top + IntroTitle.Height + ScaleY(2),
-    ContentWidth, ExpandConstant('{cm:IntroSub}'), 9, False);
-  y := IntroSub.Top + IntroSub.Height + ScaleY(12);
-  Feat1 := AddLabel(IntroPage.Surface, ContentLeft, y, ContentWidth, ExpandConstant('{cm:Feat1}'), 9, False);
-  y := Feat1.Top + Feat1.Height + ScaleY(3);
-  Feat2 := AddLabel(IntroPage.Surface, ContentLeft, y, ContentWidth, ExpandConstant('{cm:Feat2}'), 9, False);
-  y := Feat2.Top + Feat2.Height + ScaleY(3);
-  Feat3 := AddLabel(IntroPage.Surface, ContentLeft, y, ContentWidth, ExpandConstant('{cm:Feat3}'), 9, False);
-  y := Feat3.Top + Feat3.Height + ScaleY(3);
-  Feat4 := AddLabel(IntroPage.Surface, ContentLeft, y, ContentWidth, ExpandConstant('{cm:Feat4}'), 9, False);
-  InfoLine := AddLabel(IntroPage.Surface, ContentLeft, Feat4.Top + Feat4.Height + ScaleY(12),
-    ContentWidth, ExpandConstant('{cm:InfoLine}'), 8, False);
-  SoundCheck := TNewCheckBox.Create(IntroPage.Surface);
-  SoundCheck.Parent := IntroPage.Surface;
-  SoundCheck.Left := ContentLeft;
-  SoundCheck.Top := InfoLine.Top + InfoLine.Height + ScaleY(12);
-  SoundCheck.Width := ContentWidth;
-  SoundCheck.Caption := ExpandConstant('{cm:SoundCaption}');
-  SoundCheck.Checked := True;
-  SoundCheck.OnClick := @SoundCheckClick;
-  SoundCheck.Font.Name := 'Segoe UI';
-  SoundCheck.Font.Size := 8;
+  IntroBanner := AddBanner(IntroPage.Surface, IntroLeft, ScaleY(8), IntroWidth, ScaleY(100), 'banner.bmp');
+  IntroTitle := AddLabel(IntroPage.Surface, IntroLeft, IntroBanner.Top + IntroBanner.Height + ScaleY(12),
+    IntroWidth, 'ZAPRET LAUNCHER', 16, True);
+  IntroSub := AddLabel(IntroPage.Surface, IntroLeft, IntroTitle.Top + IntroTitle.Height + ScaleY(4),
+    IntroWidth, ExpandConstant('{cm:IntroSub}'), 9, False);
+  y := IntroSub.Top + IntroSub.Height + ScaleY(14);
+  Feat1 := AddLabel(IntroPage.Surface, IntroLeft, y, IntroWidth, ExpandConstant('{cm:Feat1}'), 9, False);
+  y := Feat1.Top + Feat1.Height + ScaleY(5);
+  Feat2 := AddLabel(IntroPage.Surface, IntroLeft, y, IntroWidth, ExpandConstant('{cm:Feat2}'), 9, False);
+  y := Feat2.Top + Feat2.Height + ScaleY(5);
+  Feat3 := AddLabel(IntroPage.Surface, IntroLeft, y, IntroWidth, ExpandConstant('{cm:Feat3}'), 9, False);
+  y := Feat3.Top + Feat3.Height + ScaleY(5);
+  Feat4 := AddLabel(IntroPage.Surface, IntroLeft, y, IntroWidth, ExpandConstant('{cm:Feat4}'), 9, False);
+  InfoLine := AddLabel(IntroPage.Surface, IntroLeft, Feat4.Top + Feat4.Height + ScaleY(16),
+    IntroWidth, ExpandConstant('{cm:InfoLine}'), 8, False);
 
-  { --- страница 2: установка --- }
-  InstallBanner := AddImage(WizardForm.InstallingPage, ContentLeft, ScaleY(8), ContentWidth, ScaleY(96), 'anim_00.bmp');
+  { --- страница 2: установка (статичный баннер, без звука) --- }
+  InstallBanner := AddBanner(WizardForm.InstallingPage, IntroLeft, ScaleY(8), IntroWidth, ScaleY(100), 'banner.bmp');
   WizardForm.ProgressGauge.Visible := False;
   WizardForm.FilenameLabel.Visible := False;
-  WizardForm.StatusLabel.Left := ContentLeft;
-  WizardForm.StatusLabel.Top := InstallBanner.Top + InstallBanner.Height + ScaleY(14);
-  WizardForm.StatusLabel.Width := ContentWidth;
+  WizardForm.StatusLabel.Left := IntroLeft;
+  WizardForm.StatusLabel.Top := InstallBanner.Top + InstallBanner.Height + ScaleY(16);
+  WizardForm.StatusLabel.Width := IntroWidth;
   WizardForm.StatusLabel.AutoSize := False;
   WizardForm.StatusLabel.Font.Name := 'Segoe UI';
   WizardForm.StatusLabel.Font.Size := 9;
-  ProgressTrack := AddImage(WizardForm.InstallingPage, ContentLeft,
-    WizardForm.StatusLabel.Top + WizardForm.StatusLabel.Height + ScaleY(12),
-    ContentWidth, ScaleY(16), 'progress_track.bmp');
-  ProgressFill := AddImage(WizardForm.InstallingPage, ContentLeft, ProgressTrack.Top, 1, ScaleY(16), 'progress_fill.bmp');
-  PercentLabel := AddLabel(WizardForm.InstallingPage, ContentLeft,
-    ProgressTrack.Top + ProgressTrack.Height + ScaleY(6), ContentWidth, '0%', 8, True);
+  ProgressTrack := AddImage(WizardForm.InstallingPage, IntroLeft,
+    WizardForm.StatusLabel.Top + WizardForm.StatusLabel.Height + ScaleY(14),
+    IntroWidth, ScaleY(16), 'progress_track.bmp');
+  ProgressFill := AddImage(WizardForm.InstallingPage, IntroLeft, ProgressTrack.Top, 1, ScaleY(16), 'progress_fill.bmp');
+  PercentLabel := AddLabel(WizardForm.InstallingPage, IntroLeft,
+    ProgressTrack.Top + ProgressTrack.Height + ScaleY(8), IntroWidth, '0%', 8, True);
 
-  { --- страница 3: финал --- }
-  FinishBanner := AddImage(WizardForm.FinishedPage, ContentLeft, ScaleY(8), ContentWidth, ScaleY(96), 'finish_banner.bmp');
+  { --- страница 3: финал (большая картинка слева — учитываем) --- }
+  FinishBanner := AddBanner(WizardForm.FinishedPage, FinishLeft, ScaleY(6), FinishWidth, ScaleY(96), 'finish_banner.bmp');
   WizardForm.FinishedHeadingLabel.Visible := False;
   WizardForm.FinishedLabel.Visible := False;
-  FinishTitle := AddLabel(WizardForm.FinishedPage, ContentLeft,
-    FinishBanner.Top + FinishBanner.Height + ScaleY(8), ContentWidth, ExpandConstant('{cm:FinishTitle}'), 15, True);
-  FinishText := AddLabel(WizardForm.FinishedPage, ContentLeft,
-    FinishTitle.Top + FinishTitle.Height + ScaleY(4), ContentWidth, ExpandConstant('{cm:FinishText}'), 9, False);
-  WizardForm.RunList.Left := ContentLeft;
+  FinishTitle := AddLabel(WizardForm.FinishedPage, FinishLeft,
+    FinishBanner.Top + FinishBanner.Height + ScaleY(10), FinishWidth, ExpandConstant('{cm:FinishTitle}'), 15, True);
+  FinishText := AddLabel(WizardForm.FinishedPage, FinishLeft,
+    FinishTitle.Top + FinishTitle.Height + ScaleY(4), FinishWidth, ExpandConstant('{cm:FinishText}'), 9, False);
+  WizardForm.RunList.Left := FinishLeft;
   WizardForm.RunList.Top := FinishText.Top + FinishText.Height + ScaleY(10);
-  WizardForm.RunList.Width := ContentWidth;
+  WizardForm.RunList.Width := FinishWidth;
+  WizardForm.RunList.Height := WizardForm.FinishedPage.Height - WizardForm.RunList.Top - ScaleY(12);
+  if WizardForm.RunList.Height < ScaleY(40) then
+    WizardForm.RunList.Height := ScaleY(40);
   WizardForm.RunList.Font.Name := 'Segoe UI';
   WizardForm.RunList.Font.Size := 9;
 
@@ -336,10 +338,6 @@ begin
   WizardForm.NextButton.Font.Style := [fsBold];
   WizardForm.CancelButton.Font.Name := 'Segoe UI';
   WizardForm.CancelButton.Font.Size := 9;
-
-  FrameIdx := 0;
-  AnimTimer := SetTimer(0, 0, FRAME_MS, CreateCallback(@AnimTick));
-  PlaySoundFile('sound_intro.wav', 'zlaunch_intro');
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -355,6 +353,7 @@ begin
     WizardForm.NextButton.Caption := ExpandConstant('{cm:BtnInstall}');
     WizardForm.CancelButton.Caption := ExpandConstant('{cm:BtnCancel}');
     WizardForm.BackButton.Visible := False;
+    SetFocus(WizardForm.NextButton.Handle);
   end
   else if CurPageID = wpInstalling then
   begin
@@ -362,11 +361,13 @@ begin
   end
   else if CurPageID = wpFinished then
   begin
-    mciSendString('close zlaunch_intro', '', 0, 0);
-    PlaySoundFile('sound_done.wav', 'zlaunch_done');
-    WizardForm.NextButton.Caption := ExpandConstant('{cm:BtnClose}');
+    { не висим в ожидании: закрываемся сами через CLOSE_SECONDS секунд }
+    CloseCountdown := CLOSE_SECONDS;
+    WizardForm.NextButton.Caption := ExpandConstant('{cm:BtnClose}') + ' (' + IntToStr(CloseCountdown) + ')';
     WizardForm.BackButton.Visible := False;
     WizardForm.CancelButton.Visible := False;
+    SetFocus(WizardForm.NextButton.Handle);
+    CloseTimer := SetTimer(0, 0, 1000, CreateCallback(@CloseTick));
   end;
 end;
 
@@ -389,8 +390,6 @@ end;
 
 procedure DeinitializeSetup();
 begin
-  if AnimTimer <> 0 then
-    KillTimer(0, AnimTimer);
-  mciSendString('close zlaunch_intro', '', 0, 0);
-  mciSendString('close zlaunch_done', '', 0, 0);
+  if CloseTimer <> 0 then
+    KillTimer(0, CloseTimer);
 end;
